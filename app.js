@@ -27,7 +27,40 @@ const { sleep } = require("./lib/helpers");
 
 global.WebSocket = WebSocket;
 
+// Initialize app
+const app = express();
+const port = process.env.PORT || 6969;
+
 const mongoose = require("mongoose");
+
+// Promisify necessary functions
+app.use(cors());
+const writeFile = util.promisify(fs.writeFile);
+
+
+const { v4: uuidv4 } = require('uuid');
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        // Create a predictable directory structure based on today's date
+        const today = new Date();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const year = today.getFullYear();
+        
+        const dir = `uploads/${year}/${month}/${day}/`;
+
+        // Ensure the directory exists, if not, create it
+        fs.promises.mkdir(dir, { recursive: true }).then(() => {
+            cb(null, dir);
+        }).catch(cb);
+    },
+    filename: function (req, file, cb) {
+        // Use UUID for unique filenames
+        cb(null, `${file.fieldname}-${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`);
+    }
+});
+const upload = multer({ storage: storage });
 
 // --------------------- MONGOOSE -----------------------------
 
@@ -130,6 +163,7 @@ async function getPaymentHash(invoice) {
 
 async function generateInvoice(service) {
   const msats = await getServicePrice(service);
+  console.log("msats:",msats)
   const lnurlResponse = await axios.get(getLNURL(), {
     headers: {
       Accept: "application/json",
@@ -162,13 +196,24 @@ async function generateInvoice(service) {
   return invoice;
 }
 
+function usd_to_millisats(servicePriceUSD, bitcoinPrice) {
+  console.log("usd_to_millisats servicePriceUSD:", servicePriceUSD)
+  console.log("bitcoinPrice:", bitcoinPrice)
+  const profitMarginFactor = 1.0 + process.env.PROFIT_MARGIN_PCT / 100.0;
+  const rawValue = (servicePriceUSD * 100000000000 * profitMarginFactor) / bitcoinPrice;
+  const roundedValue = Math.round(rawValue / 1000) * 1000; // Round to the nearest multiple of 1000
+  return roundedValue;
+}
+
 async function getServicePrice(service) {
+  console.log("getServicePrice service:",service)
   const bitcoinPrice = await getBitcoinPrice(); 
+  console.log("bitcoinPrice:",bitcoinPrice)
   switch (service) {
     case "WHSPR":
-      return usd_to_millisats(process.env.WHISPR_USD,bitcoinPrice);
+      return usd_to_millisats(process.env.WHSPR_USD,bitcoinPrice);
     default:
-      return usd_to_millisats(process.env.WHISPR_USD,bitcoinPrice);
+      return usd_to_millisats(process.env.WHSPR_USD,bitcoinPrice);
   }
 }
 
@@ -181,13 +226,16 @@ function getSuccessAction(service, paymentHash) {
 }
 
 
-app.post("/:service", async (req, res) => {
+app.post("/:service", upload.single('audio'), async (req, res) => {
   try {
     const service = req.params.service;
+    const uploadedFilePath = req.file.path;
     const invoice = await generateInvoice(service);
+    console.log("invoice:",invoice)
     const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
 
     doc.requestData = req.body;
+    doc.requestData["filePath"] = uploadedFilePath;
     doc.state = "NOT_PAID";
     await doc.save();
 
@@ -278,24 +326,7 @@ async function callWhisper(data) {
   }
 }
 
-// Promisify necessary functions
-app.use(cors());
-const writeFile = util.promisify(fs.writeFile);
 
-// Initialize app
-const app = express();
-const port = process.env.PORT || 6969;
-
-// Configure Multer for file upload
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/')
-    },
-    filename: function (req, file, cb) {
-        cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname))
-    }
-});
-const upload = multer({ storage: storage });
 
 // Handle audio file upload and transcription
 app.post('/transcribe', upload.single('audio'), (req, res) => {
