@@ -227,6 +227,9 @@ function getSuccessAction(service, paymentHash) {
 
 
 app.post("/:service", upload.single('audio'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).send('No file uploaded.');
+  }
   try {
     const service = req.params.service;
     const uploadedFilePath = req.file.path;
@@ -249,6 +252,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
 });
 
 app.get("/:service/:payment_hash/get_result", async (req, res) => {
+  console.log("get_result requested")
   try {
     const service = req.params.service;
     const paymentHash = req.params.payment_hash;
@@ -286,6 +290,7 @@ app.get("/:service/:payment_hash/get_result", async (req, res) => {
             });
 
           doc.state = "WORKING";
+          await sleep(1000)
           await doc.save();
           res.status(202).send({ state: doc.state });
       }
@@ -316,15 +321,36 @@ function submitService(service, data) {
 }
 
 async function callWhisper(data) {
+    return new Promise((resolve, reject) => {
+        const audioFilePath = data.filePath;
 
-  try {
-    const response = await axios(config);
-    return response.data;
-  } catch (e) {
-    console.log(`ERROR: ${e.toString().substring(0, 50)}`);
-    return e;
-  }
+        if (!audioFilePath) {
+            reject(new Error('Audio file path not found.'));
+            return;
+        }
+
+        // Call the Python script with the audio file path
+        exec(`python run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
+            if (error) {
+                console.error('stderr', stderr);
+                reject(new Error('Failed to transcribe audio.'));
+                return;
+            }
+
+            // Delete the file after processing and saving transcription
+            try {
+                fs.unlinkSync(audioFilePath);
+                console.log(`Successfully deleted: ${audioFilePath}`);
+            } catch (err) {
+                console.error(`Error deleting file ${audioFilePath}:`, err);
+            }
+            
+            // Return the transcription response
+            resolve(stdout);
+        });
+    });
 }
+
 
 
 
