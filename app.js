@@ -29,7 +29,7 @@ global.WebSocket = WebSocket;
 
 // Initialize app
 const app = express();
-const port = process.env.PORT || 6969;
+const port = process.env.PORT || 5001;
 
 const mongoose = require("mongoose");
 
@@ -330,7 +330,7 @@ async function callWhisper(data) {
         }
 
         // Call the Python script with the audio file path
-        exec(`python run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
+        exec(`python3 run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
             if (error) {
                 console.error('stderr', stderr);
                 reject(new Error('Failed to transcribe audio.'));
@@ -352,26 +352,28 @@ async function callWhisper(data) {
 }
 
 
-
-
-// Handle audio file upload and transcription
-app.post('/transcribe', upload.single('audio'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).send('No file uploaded.');
-    }
-
-    const audioFilePath = req.file.path; // This is your audio file path
-
-    // Call the Python script with the audio file path
-    exec(`python run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
-        if (error) {
-            console.error('stderr', stderr);
-            return res.status(500).send('Internal Server Error');
-        }
-        // Send the transcription response
-        res.send(stdout);
-    });
+app.get('/', (req, res) => {
+  res.status(200).send("Send your POST request to /WHSPR for transcriptions ")
 });
+
+// // Handle audio file upload and transcription
+// app.post('/transcribe', upload.single('audio'), (req, res) => {
+//     if (!req.file) {
+//         return res.status(400).send('No file uploaded.');
+//     }
+
+//     const audioFilePath = req.file.path; // This is your audio file path
+
+//     // Call the Python script with the audio file path
+//     exec(`python run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
+//         if (error) {
+//             console.error('stderr', stderr);
+//             return res.status(500).send('Internal Server Error');
+//         }
+//         // Send the transcription response
+//         res.send(stdout);
+//     });
+// });
 
 // Function to get the audio duration
 function getAudioDuration(audioBuffer) {
