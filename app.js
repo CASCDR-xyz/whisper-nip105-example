@@ -29,13 +29,17 @@ global.WebSocket = WebSocket;
 
 // Initialize app
 const app = express();
-const port = process.env.PORT || 5001;
+const port = process.env.PORT || 5004;
 
 const mongoose = require("mongoose");
 
 // Promisify necessary functions
 app.use(cors());
 const writeFile = util.promisify(fs.writeFile);
+
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
 
 
 const { v4: uuidv4 } = require('uuid');
