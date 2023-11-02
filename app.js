@@ -24,6 +24,7 @@ const {
   OFFERING_KIND,
 } = require("./lib/defines.js");
 const { sleep } = require("./lib/helpers");
+const runWhisperLocally = false;
 
 global.WebSocket = WebSocket;
 
@@ -324,8 +325,8 @@ function submitService(service, data) {
   }
 }
 
-async function callWhisper(data) {
-    return new Promise((resolve, reject) => {
+async function callWhisper(data, runWhisperLocally) {
+    return new Promise(async (resolve, reject) => {
         const audioFilePath = data.filePath;
 
         if (!audioFilePath) {
@@ -333,25 +334,47 @@ async function callWhisper(data) {
             return;
         }
 
-        // Call the Python script with the audio file path
-        exec(`python3 run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
-            if (error) {
-                console.error('stderr', stderr);
-                reject(new Error('Failed to transcribe audio.'));
-                return;
-            }
+        if (runWhisperLocally) {
+            // Call the Python script with the audio file path
+            exec(`python3 run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('stderr', stderr);
+                    reject(new Error('Failed to transcribe audio.'));
+                    return;
+                }
 
-            // Delete the file after processing and saving transcription
+                // Delete the file after processing and saving transcription
+                try {
+                    fs.unlinkSync(audioFilePath);
+                    console.log(`Successfully deleted: ${audioFilePath}`);
+                } catch (err) {
+                    console.error(`Error deleting file ${audioFilePath}:`, err);
+                }
+                
+                // Return the transcription response
+                resolve(stdout);
+            });
+        } else {
             try {
-                fs.unlinkSync(audioFilePath);
-                console.log(`Successfully deleted: ${audioFilePath}`);
-            } catch (err) {
-                console.error(`Error deleting file ${audioFilePath}:`, err);
+                const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', 
+                    {
+                        model: "whisper-1",
+                        file: fs.createReadStream(audioFilePath)
+                    }, 
+                    {
+                        headers: {
+                            "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+                            "Content-Type": "multipart/form-data"
+                        }
+                    }
+                );
+
+                resolve(response.data);
+
+            } catch (error) {
+                reject(new Error(`Failed to transcribe audio via OpenAI API. Error: ${error.message}`));
             }
-            
-            // Return the transcription response
-            resolve(stdout);
-        });
+        }
     });
 }
 
