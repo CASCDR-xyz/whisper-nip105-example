@@ -24,6 +24,7 @@ const {
   OFFERING_KIND,
 } = require("./lib/defines.js");
 const { sleep } = require("./lib/helpers");
+const musicMetadata = require('music-metadata');
 const runWhisperLocally = false;
 
 global.WebSocket = WebSocket;
@@ -166,8 +167,8 @@ async function getPaymentHash(invoice) {
   return paymentHashTag;
 }
 
-async function generateInvoice(service) {
-  const msats = await getServicePrice(service);
+async function generateInvoice(service,durationInSeconds) {
+  const msats = await getServicePrice(service,durationInSeconds);
   console.log("msats:",msats)
   const lnurlResponse = await axios.get(getLNURL(), {
     headers: {
@@ -210,15 +211,19 @@ function usd_to_millisats(servicePriceUSD, bitcoinPrice) {
   return roundedValue;
 }
 
-async function getServicePrice(service) {
+async function getServicePrice(service,durationInSeconds) {
   console.log("getServicePrice service:",service)
   const bitcoinPrice = await getBitcoinPrice(); 
   console.log("bitcoinPrice:",bitcoinPrice)
+  const units_count = durationInSeconds / 60.0;//assuming MINS for now. Would need to make this a function to support more units
+  const fixedUsd = parseFloat(process.env.WHSPR_FIXED_USD);
+  const variableUsd = parseFloat(process.env.WHSPR_VARIABLE_USD);
+  const totalUsd = fixedUsd + (units_count * variableUsd);
   switch (service) {
     case "WHSPR":
-      return usd_to_millisats(process.env.WHSPR_USD,bitcoinPrice);
+      return usd_to_millisats(totalUsd,bitcoinPrice);
     default:
-      return usd_to_millisats(process.env.WHSPR_USD,bitcoinPrice);
+      return usd_to_millisats(totalUsd,bitcoinPrice);
   }
 }
 
@@ -232,13 +237,17 @@ function getSuccessAction(service, paymentHash) {
 
 
 app.post("/:service", upload.single('audio'), async (req, res) => {
+  const metadata = await musicMetadata.parseFile(req.file.path);
+  const durationInSeconds = metadata.format.duration;
+  console.log("MP3 duration in seconds:", durationInSeconds);
+
   if (!req.file) {
     return res.status(400).send('No file uploaded.');
   }
   try {
     const service = req.params.service;
     const uploadedFilePath = req.file.path;
-    const invoice = await generateInvoice(service);
+    const invoice = await generateInvoice(service,durationInSeconds);
     console.log("invoice:",invoice)
     const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
 
@@ -384,24 +393,6 @@ app.get('/', (req, res) => {
   res.status(200).send("Send your POST request to /WHSPR for transcriptions ")
 });
 
-// // Handle audio file upload and transcription
-// app.post('/transcribe', upload.single('audio'), (req, res) => {
-//     if (!req.file) {
-//         return res.status(400).send('No file uploaded.');
-//     }
-
-//     const audioFilePath = req.file.path; // This is your audio file path
-
-//     // Call the Python script with the audio file path
-//     exec(`python run_whisper.py ${audioFilePath}`, (error, stdout, stderr) => {
-//         if (error) {
-//             console.error('stderr', stderr);
-//             return res.status(500).send('Internal Server Error');
-//         }
-//         // Send the transcription response
-//         res.send(stdout);
-//     });
-// });
 
 // Function to get the audio duration
 function getAudioDuration(audioBuffer) {
@@ -424,6 +415,89 @@ function getAudioDuration(audioBuffer) {
       .run();
   });
 }
+
+// --------------------- NOSTR -----------------------------
+function createOfferingNote(
+  pk,
+  sk,
+  service,
+  cost_fixed,
+  cost_variable,
+  cost_units,
+  endpoint,
+  status,
+  inputSchema,
+  outputSchema,
+  description
+) {
+  const now = Math.floor(Date.now() / 1000);
+
+  const content = {
+    endpoint, // string
+    status, // UP/DOWN/CLOSED
+    cost_fixed, // number
+    cost_variable,
+    cost_units,
+    inputSchema, // Json Schema
+    outputSchema, // Json Schema
+    description, // string / NULL
+  };
+
+  let offeringEvent = {
+    kind: OFFERING_KIND,
+    pubkey: pk,
+    created_at: now,
+    tags: [
+      ["s", service],
+      ["d", service],
+    ],
+    content: JSON.stringify(content),
+  };
+  offeringEvent.id = getEventHash(offeringEvent);
+  offeringEvent.sig = getSignature(offeringEvent, sk);
+
+  console.log(`offeringEvent:`,offeringEvent)
+
+  return offeringEvent;
+}
+
+// Post Offerings
+async function postOfferings() {
+  const sk = process.env.NOSTR_SK;
+  const pk = getPublicKey(sk);
+
+  const relay = relayInit(process.env.NOSTR_RELAY);
+  relay.on("connect", () => {
+    console.log(`connected to ${relay.url}`);
+  });
+  relay.on("error", (e) => {
+    console.log(`failed to connect to ${relay.url}: ${e}`);
+  });
+  await relay.connect();
+
+  const msats = await getServicePrice("WHSPR");
+
+  const whisperOffering = createOfferingNote(
+    pk,
+    sk,
+    "https://api.openai.com/v1/audio/transcriptions",
+    process.env.WHSPR_FIXED_USD,
+    process.env.WHSPR_VARIABLE_USD,
+    process.env.WHSPR_COST_UNITS,
+    process.env.ENDPOINT + "/" + "STABLE",
+    "UP",
+    WHSPR_SCHEMA,
+    WHSPR_RESULT_SCHEMA,
+    "Get access to Whisper transcriptions here!"
+  );
+
+  await relay.publish(whisperOffering);
+  console.log(`Published Whisper Offering: ${whisperOffering.id}`);
+
+  relay.close();
+}
+
+postOfferings();
 
 // Start the server
 app.listen(port, () => {
