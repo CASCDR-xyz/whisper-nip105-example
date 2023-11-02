@@ -475,14 +475,16 @@ async function postOfferings() {
   });
   await relay.connect();
 
-  const msats = await getServicePrice("WHSPR");
+  const bitcoinPrice = await getBitcoinPrice(); 
+  const fixed_msats = await usd_to_millisats(process.env.WHSPR_FIXED_USD,bitcoinPrice);
+  const variable_msats = await usd_to_millisats(process.env.WHSPR_VARIABLE_USD,bitcoinPrice);
 
   const whisperOffering = createOfferingNote(
     pk,
     sk,
     "https://api.openai.com/v1/audio/transcriptions",
-    process.env.WHSPR_FIXED_USD,
-    process.env.WHSPR_VARIABLE_USD,
+    fixed_msats,
+    variable_msats,
     process.env.WHSPR_COST_UNITS,
     process.env.ENDPOINT + "/" + "STABLE",
     "UP",
@@ -497,7 +499,9 @@ async function postOfferings() {
   relay.close();
 }
 
+
 postOfferings();
+setInterval(postOfferings, 300000);
 
 // Start the server
 app.listen(port, () => {
