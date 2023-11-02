@@ -354,7 +354,7 @@ async function callWhisper(data, runWhisperLocally) {
                 // Return the transcription response
                 resolve(stdout);
             });
-        } else {
+        } else {//
             try {
                 const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', 
                     {
