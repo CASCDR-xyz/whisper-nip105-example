@@ -444,8 +444,8 @@ async function callWhisper(data, runWhisperLocally) {
                 resolve(stdout);
             });
         } else {////
-          console.log('hi')
             try {
+              console.log(`Calling whisper...`)
                 const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', 
                     {
                         model: "whisper-1",
@@ -458,10 +458,11 @@ async function callWhisper(data, runWhisperLocally) {
                         }
                     }
                 );
-
+                console.log(`Got response from Whisper:`,response.data)
                 resolve(response.data);
 
             } catch (error) {
+              console.log(`Got error from Whisper:`,error)
                 reject(new Error(`Failed to transcribe audio via OpenAI API. Error: ${error.message}`));
             }
         }
@@ -477,7 +478,7 @@ app.get('/', (req, res) => {
 // Function to download a remote file and return its local path
 async function downloadRemoteFile(remoteUrl) {
   const tempDir = path.join(__dirname, "temp");
-  const fileName = `downloaded_file_${Date.now()}`;
+  const fileName = `downloaded_file_${Date.now()}.mp3`;
 
   try {
     // Create the temp directory if it doesn't exist
