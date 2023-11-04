@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { exec } = require('child_process');
 const fs = require('fs');
+const fs_promises = require('fs').promises;
 const util = require('util');
 const path = require('path');
 require('dotenv').config();
@@ -46,6 +47,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 const { v4: uuidv4 } = require('uuid');
 
+//File Management Helpers://
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         // Create a predictable directory structure based on today's date
@@ -67,6 +70,46 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({ storage: storage });
+
+
+
+async function isMp4File(filePath) {
+  const fileExtension = path.extname(filePath);
+  return fileExtension === '.mp4';
+}
+
+async function extractAudioFromMp4(inputFilePath, outputFilePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(inputFilePath)
+      .audioCodec('libmp3lame')
+      .toFormat('mp3')
+      .on('end', () => {
+        resolve();
+      })
+      .on('error', (err) => {
+        reject(err);
+      })
+      .save(outputFilePath);
+  });
+}
+
+async function getDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        reject(err);
+      } else {
+        const durationInSeconds = metadata.format.duration;
+        resolve(durationInSeconds);
+      }
+    });
+  });
+}
+
+
+
+//END File Management Helpers//
 
 // --------------------- MONGOOSE -----------------------------
 
@@ -237,31 +280,68 @@ function getSuccessAction(service, paymentHash) {
 
 
 app.post("/:service", upload.single('audio'), async (req, res) => {
-  const metadata = await musicMetadata.parseFile(req.file.path);
-  const durationInSeconds = metadata.format.duration;
-  console.log("MP3 duration in seconds:", durationInSeconds);
+  const remoteUrl = req.body.remote_url;
+  if (remoteUrl) {
+    // Remote URL provided, download and process it
+    try {
+      const urlObj = new URL(remoteUrl);
+      const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || urlObj.pathname.toLowerCase().endsWith(".mp4");
+      if (!isMp3OrMp4) {
+        return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
+      }
 
-  if (!req.file) {
-    return res.status(400).send('No file uploaded.');
+      // Download the remote file
+      const downloadedFilePath = await downloadRemoteFile(remoteUrl);
+
+      // Determine the duration of the downloaded file
+      const durationInSeconds = await getAudioDuration(downloadedFilePath);
+
+      // Process the downloaded file and generate an invoice
+      const service = req.params.service;
+      const invoice = await generateInvoice(service, durationInSeconds);
+
+      // Save necessary data to the database
+      const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
+      doc.requestData = { remote_url: remoteUrl };
+      doc.requestData["filePath"] = downloadedFilePath;
+      doc.state = "NOT_PAID";
+      await doc.save();
+
+      logState(service, invoice.paymentHash, "REQUESTED");
+
+      res.status(402).send(invoice);
+    } catch (e) {
+      console.log(e.toString().substring(0, 150));
+      res.status(500).send(e);
+    }
   }
-  try {
-    const service = req.params.service;
-    const uploadedFilePath = req.file.path;
-    const invoice = await generateInvoice(service,durationInSeconds);
-    console.log("invoice:",invoice)
-    const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
+  else{//file upload
+    const metadata = await musicMetadata.parseFile(req.file.path);
+    const durationInSeconds = metadata.format.duration;
+    console.log("MP3 duration in seconds:", durationInSeconds);
 
-    doc.requestData = req.body;
-    doc.requestData["filePath"] = uploadedFilePath;
-    doc.state = "NOT_PAID";
-    await doc.save();
+    if (!req.file) {
+      return res.status(400).send('No file uploaded.');
+    }
+    try {
+      const service = req.params.service;
+      const uploadedFilePath = req.file.path;
+      const invoice = await generateInvoice(service,durationInSeconds);
+      console.log("invoice:",invoice)
+      const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
 
-    logState(service, invoice.paymentHash, "REQUESTED");
+      doc.requestData = req.body;
+      doc.requestData["filePath"] = uploadedFilePath;
+      doc.state = "NOT_PAID";
+      await doc.save();
 
-    res.status(402).send(invoice);
-  } catch (e) {
-    console.log(e.toString().substring(0, 150));
-    res.status(500).send(e);
+      logState(service, invoice.paymentHash, "REQUESTED");
+
+      res.status(402).send(invoice);
+    } catch (e) {
+      console.log(e.toString().substring(0, 150));
+      res.status(500).send(e);
+    }
   }
 });
 
@@ -394,25 +474,49 @@ app.get('/', (req, res) => {
 });
 
 
+// Function to download a remote file and return its local path
+async function downloadRemoteFile(remoteUrl) {
+  const tempDir = path.join(__dirname, "temp");
+  const fileName = `downloaded_file_${Date.now()}`;
+
+  try {
+    // Create the temp directory if it doesn't exist
+    await fs_promises.mkdir(tempDir, { recursive: true });
+
+    const filePath = path.join(tempDir, fileName);
+
+    // Download the remote file as a stream and save it locally
+    const response = await axios.get(remoteUrl, { responseType: "stream" });
+    const writer = require('fs').createWriteStream(filePath); // Use non-promise method here
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+
+    return filePath;
+  } catch (error) {
+    throw new Error(`Failed to download remote file: ${error.message}`);
+  }
+}
+
 // Function to get the audio duration
-function getAudioDuration(audioBuffer) {
+async function getAudioDuration(audioFilePath) {
+  const ffmpeg = require("fluent-ffmpeg");
+
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(audioBuffer)
-      .on('end', (stdout, stderr) => {
-        // Parse the duration from the ffmpeg output
-        const durationMatch = stderr.match(/Duration: (\d{2}:\d{2}:\d{2}\.\d{2})/);
-        if (durationMatch && durationMatch.length >= 2) {
-          const durationString = durationMatch[1];
-          const [hours, minutes, seconds] = durationString.split(':').map(parseFloat);
-          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-          resolve(totalSeconds);
+      .input(audioFilePath)
+      .ffprobe((err, data) => {
+        if (err) {
+          reject(err);
         } else {
-          reject('Unable to determine audio duration');
+          const durationInSeconds = data.format.duration;
+          resolve(durationInSeconds);
         }
-      })
-      .on('error', reject)
-      .run();
+      });
   });
 }
 
