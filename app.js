@@ -88,9 +88,11 @@ async function extractAudioFromMp4(inputFilePath, outputFilePath) {
       .audioCodec('libmp3lame')
       .toFormat('mp3')
       .on('end', () => {
+        deleteFile(inputFilePath);
         resolve();
       })
       .on('error', (err) => {
+        deleteFile(inputFilePath);
         reject(err);
       })
       .save(outputFilePath);
@@ -333,6 +335,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
   else{//file upload
     const metadata = await musicMetadata.parseFile(req.file.path);
     const durationInSeconds = metadata.format.duration;
+
     console.log("MP3 duration in seconds:", durationInSeconds);
 
     if (!req.file) {
@@ -341,12 +344,26 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
     try {
       const service = req.params.service;
       const uploadedFilePath = req.file.path;
+      const isMp4InPath = uploadedFilePath.toLowerCase().endsWith(".mp4");
+      const isMp4 = isMp4InPath;
+      const isMp3OrMp4 = uploadedFilePath.toLowerCase().endsWith(".mp3") || isMp4;
+      console.log(`uploadedFilePath:${uploadedFilePath}`)
+      if (!isMp3OrMp4) {
+        return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
+      }
+
+      var mp3Path = uploadedFilePath;
+      if(isMp4){
+        mp3Path = uploadedFilePath.replace(".mp4", ".mp3");
+        await extractAudioFromMp4(uploadedFilePath, mp3Path);
+      }
+
       const invoice = await generateInvoice(service,durationInSeconds);
       console.log("invoice:",invoice)
       const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
 
       doc.requestData = req.body;
-      doc.requestData["filePath"] = uploadedFilePath;
+      doc.requestData["filePath"] = mp3Path;
       doc.state = "NOT_PAID";
       await doc.save();
 
@@ -476,12 +493,7 @@ async function callWhisper(data, runWhisperLocally) {
                 console.log(`Got response from Whisper:`,response.data)
                 resolve(response.data);
 
-                try {
-                    fs.unlinkSync(audioFilePath);
-                    console.log(`Successfully deleted: ${audioFilePath}`);
-                } catch (err) {
-                    console.error(`Error deleting file ${audioFilePath}:`, err);
-                }
+                deleteFile(audioFilePath);
 
             } catch (error) {
               console.log(`Got error from Whisper:`,error)
@@ -489,6 +501,16 @@ async function callWhisper(data, runWhisperLocally) {
             }
         }
     });
+}
+
+async function deleteFile(path){
+  // Delete the file after processing and saving transcription
+  try {
+      fs.unlinkSync(path);
+      console.log(`Successfully deleted: ${path}`);
+  } catch (err) {
+      console.error(`Error deleting file ${path}:`, err);
+  }
 }
 
 
