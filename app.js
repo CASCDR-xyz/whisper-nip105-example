@@ -311,7 +311,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
         await extractAudioFromMp4(downloadedFilePath, mp3Path);
       }
 
-      if(!validateAudioSize(audioFilePath)){
+      if(!validateAudioSize(mp3Path)){
         res.status(400).send("File is too large to transcribe. The limit is 25MB.")
       }
 
@@ -363,7 +363,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
         await extractAudioFromMp4(uploadedFilePath, mp3Path);
       }
 
-      if(!validateAudioSize(audioFilePath)){
+      if(!validateAudioSize(mp3Path)){
         res.status(400).send("File is too large to transcribe. The limit is 25MB.")
       }
 
