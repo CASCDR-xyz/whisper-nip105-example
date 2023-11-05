@@ -57,7 +57,8 @@ const storage = multer.diskStorage({
         const day = String(today.getDate()).padStart(2, '0');
         const year = today.getFullYear();
         
-        const dir = `uploads/${year}/${month}/${day}/`;
+        const dir = path.join(__dirname, "temp");
+        const fileName = `downloaded_file_${Date.now()}.mp3`;
 
         // Ensure the directory exists, if not, create it
         fs.promises.mkdir(dir, { recursive: true }).then(() => {
@@ -460,6 +461,13 @@ async function callWhisper(data, runWhisperLocally) {
                 );
                 console.log(`Got response from Whisper:`,response.data)
                 resolve(response.data);
+
+                try {
+                    fs.unlinkSync(audioFilePath);
+                    console.log(`Successfully deleted: ${audioFilePath}`);
+                } catch (err) {
+                    console.error(`Error deleting file ${audioFilePath}:`, err);
+                }
 
             } catch (error) {
               console.log(`Got error from Whisper:`,error)

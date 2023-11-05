@@ -7,6 +7,8 @@ WORKDIR /app
 # Copy your Node.js application files into the container
 COPY . .
 
+RUN mkdir /temp
+
 # Install python3, pip3, git, ffmpeg, and necessary build tools using Ubuntu's apt package manager
 RUN apt-get update && apt-get install -y \
     python3 \
