@@ -310,6 +310,10 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
         await extractAudioFromMp4(downloadedFilePath, mp3Path);
       }
 
+      if(!validateAudioSize(audioFilePath)){
+        res.status(400).send("File is too large to transcribe. The limit is 25MB.")
+      }
+
       // Determine the duration of the downloaded file
       const durationInSeconds = await getAudioDuration(mp3Path);
 
@@ -356,6 +360,10 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
       if(isMp4){
         mp3Path = uploadedFilePath.replace(".mp4", ".mp3");
         await extractAudioFromMp4(uploadedFilePath, mp3Path);
+      }
+
+      if(!validateAudioSize(audioFilePath)){
+        res.status(400).send("File is too large to transcribe. The limit is 25MB.")
       }
 
       const invoice = await generateInvoice(service,durationInSeconds);
@@ -572,6 +580,28 @@ async function getAudioDuration(audioFilePath) {
         }
       });
   });
+}
+
+async function validateAudioSize(audioFilePath){
+  const limit = 25;//MB
+  fs.stat(audioFilePath, (err, stats) => {
+  if (err) {
+    console.error('Error reading file information:', err);
+    return false;
+  } else {
+    // File size in bytes
+    const fileSizeBytes = stats.size;
+
+    // Convert bytes to kilobytes (KB) or megabytes (MB) for more readable output
+    const fileSizeKB = fileSizeBytes / 1024;
+    const fileSizeMB = fileSizeKB / 1024;
+
+    console.log(`File size: ${fileSizeBytes} bytes`);
+    console.log(`File size: ${fileSizeKB} KB`);
+    console.log(`File size: ${fileSizeMB} MB`);
+    return (fileSizeMB < limit);
+  }
+});
 }
 
 // --------------------- NOSTR -----------------------------
