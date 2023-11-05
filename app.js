@@ -80,6 +80,8 @@ async function isMp4File(filePath) {
 }
 
 async function extractAudioFromMp4(inputFilePath, outputFilePath) {
+  const ffmpeg = require("fluent-ffmpeg");
+  console.log(`Extracting video from: ${inputFilePath} and moving it to ${outputFilePath}`)
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(inputFilePath)
@@ -286,16 +288,28 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
     // Remote URL provided, download and process it
     try {
       const urlObj = new URL(remoteUrl);
-      const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || urlObj.pathname.toLowerCase().endsWith(".mp4");
+      
+      const isMp4InPath = urlObj.pathname.toLowerCase().endsWith(".mp4");
+      const isMp4InMimeType = urlObj.searchParams.get("mime") === "video/mp4";
+      const isMp4 = isMp4InPath || isMp4InMimeType;
+      const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || isMp4;
+      console.log(`urlObj:${urlObj}`)
       if (!isMp3OrMp4) {
         return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
       }
 
       // Download the remote file
       const downloadedFilePath = await downloadRemoteFile(remoteUrl);
+      var mp3Path = downloadedFilePath;
+      console.log(`downloadedFilePath:${downloadedFilePath}`)
+      console.log(`isMp4:${isMp4}`)
+      if(isMp4){
+        mp3Path = downloadedFilePath.replace(".mp4", ".mp3");
+        await extractAudioFromMp4(downloadedFilePath, mp3Path);
+      }
 
       // Determine the duration of the downloaded file
-      const durationInSeconds = await getAudioDuration(downloadedFilePath);
+      const durationInSeconds = await getAudioDuration(mp3Path);
 
       // Process the downloaded file and generate an invoice
       const service = req.params.service;
@@ -304,7 +318,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
       // Save necessary data to the database
       const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
       doc.requestData = { remote_url: remoteUrl };
-      doc.requestData["filePath"] = downloadedFilePath;
+      doc.requestData["filePath"] = mp3Path;
       doc.state = "NOT_PAID";
       await doc.save();
 
@@ -485,8 +499,17 @@ app.get('/', (req, res) => {
 
 // Function to download a remote file and return its local path
 async function downloadRemoteFile(remoteUrl) {
-  const tempDir = path.join(__dirname, "temp");
-  const fileName = `downloaded_file_${Date.now()}.mp3`;
+  const tempDir = path.join(__dirname, "/app/temp");
+  const urlObj = new URL(remoteUrl);
+  const isMp4InPath = urlObj.pathname.toLowerCase().endsWith(".mp4");
+  const isMp4InMimeType = urlObj.searchParams.get("mime") === "video/mp4";
+  const isMp4 = isMp4InPath || isMp4InMimeType;
+  const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || isMp4;
+  //console.log(`isMp4:${isMp4},isMp4InMimeType:${isMp4InMimeType},isMp4InPath:${isMp4InPath}`)
+  if(!isMp3OrMp4){
+    throw new Error(`File is not mp3 or mp4`);
+  }
+  const fileName = `downloaded_file_${Date.now() + (isMp4 ? '.mp4' : '.mp3')}`;
 
   try {
     // Create the temp directory if it doesn't exist
