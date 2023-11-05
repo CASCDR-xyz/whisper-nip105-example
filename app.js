@@ -584,25 +584,60 @@ async function getAudioDuration(audioFilePath) {
 }
 
 async function validateAudioSize(audioFilePath){
-  const limit = 25;//MB
-  fs.stat(audioFilePath, (err, stats) => {
-  if (err) {
-    console.error('Error reading file information:', err);
-    return false;
-  } else {
-    // File size in bytes
-    const fileSizeBytes = stats.size;
+    const limit = 25;//MB
+    fs.stat(audioFilePath, (err, stats) => {
+    if (err) {
+      console.error('Error reading file information:', err);
+      return false;
+    } else {
+      // File size in bytes
+      const fileSizeBytes = stats.size;
 
-    // Convert bytes to kilobytes (KB) or megabytes (MB) for more readable output
-    const fileSizeKB = fileSizeBytes / 1024;
-    const fileSizeMB = fileSizeKB / 1024;
+      // Convert bytes to kilobytes (KB) or megabytes (MB) for more readable output
+      const fileSizeKB = fileSizeBytes / 1024;
+      const fileSizeMB = fileSizeKB / 1024;
 
-    console.log(`File size: ${fileSizeBytes} bytes`);
-    console.log(`File size: ${fileSizeKB} KB`);
-    console.log(`File size: ${fileSizeMB} MB`);
-    return (fileSizeMB < limit);
-  }
-});
+      console.log(`File size: ${fileSizeBytes} bytes`);
+      console.log(`File size: ${fileSizeKB} KB`);
+      console.log(`File size: ${fileSizeMB} MB`);
+      return (fileSizeMB < limit);
+    }
+  });
+}
+
+function houseKeeping() {
+  const tempDir = path.join(__dirname, "temp");
+  const oneDayAgo = new Date();
+  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+  fs.readdir(tempDir, (err, files) => {
+    if (err) {
+      console.error('Error reading temp directory:', err);
+      return;
+    }
+
+    files.forEach((file) => {
+      const filePath = path.join(tempDir, file);
+      fs.stat(filePath, (statErr, stats) => {
+        if (statErr) {
+          console.error(`Error reading file information for ${filePath}:`, statErr);
+          return;
+        }
+
+        const fileModifiedDate = new Date(stats.mtime);
+
+        if (fileModifiedDate < oneDayAgo) {
+          fs.unlink(filePath, (unlinkErr) => {
+            if (unlinkErr) {
+              console.error(`Error deleting file ${filePath}:`, unlinkErr);
+            } else {
+              console.log(`Deleted file: ${filePath}`);
+            }
+          });
+        }
+      });
+    });
+  });
 }
 
 // --------------------- NOSTR -----------------------------
@@ -707,9 +742,15 @@ async function postOfferings() {
   relay.close();
 }
 
+async function run_periodic_tasks(){
+  postOfferings();
+  houseKeeping();
+}
+
 
 postOfferings();
-setInterval(postOfferings, 300000);
+houseKeeping();
+setInterval(run_periodic_tasks, 300000);
 
 // Start the server
 app.listen(port, () => {
