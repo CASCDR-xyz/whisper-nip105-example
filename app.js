@@ -21,6 +21,7 @@ const {
 } = require("nostr-tools");
 const {
   WHSPR_SCHEMA,
+  WHSPR_REMOTE_SCHEMA,
   WHSPR_RESULT_SCHEMA,
   OFFERING_KIND,
 } = require("./lib/defines.js");
@@ -619,6 +620,8 @@ function createOfferingNote(
   description
 ) {
   const now = Math.floor(Date.now() / 1000);
+  console.log('inputSchema:',inputSchema)
+  console.log('outputSchema:', outputSchema)
 
   const content = {
     endpoint, // string
@@ -678,11 +681,28 @@ async function postOfferings() {
     "UP",
     WHSPR_SCHEMA,
     WHSPR_RESULT_SCHEMA,
-    "Get access to Whisper transcriptions here!"
+    "Get access to Whisper transcriptions here! Upload your file directly to the endpoint and it will process & provide an invoice"
   );
 
   await relay.publish(whisperOffering);
   console.log(`Published Whisper Offering: ${whisperOffering.id}`);
+
+  const whisperOffering2 = createOfferingNote(
+    pk,
+    sk,
+    "https://api.openai.com/v1/audio/transcriptions",
+    fixed_msats,
+    variable_msats,
+    process.env.WHSPR_COST_UNITS,
+    process.env.ENDPOINT + "/" + "STABLE",
+    "UP",
+    WHSPR_REMOTE_SCHEMA,
+    WHSPR_RESULT_SCHEMA,
+    "Get access to Whisper transcriptions here! Provide a URL to an mp3 or mp4 file and the endpoint will process & provide an invoice."
+  );
+
+  await relay.publish(whisperOffering2);
+  console.log(`Published Whisper REMOTE Offering: ${whisperOffering2.id}`);
 
   relay.close();
 }
