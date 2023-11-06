@@ -45,6 +45,15 @@ app.use(cors({
 }));
 
 app.options('*', cors());
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*'); // Allow requests from any origin (*)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  next();
+});
+
+
 const writeFile = util.promisify(fs.writeFile);
 
 app.use(bodyParser.json());
