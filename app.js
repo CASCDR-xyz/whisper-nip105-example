@@ -38,7 +38,13 @@ const port = process.env.PORT || 5004;
 const mongoose = require("mongoose");
 
 // Promisify necessary functions
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.options('*', cors());
 const writeFile = util.promisify(fs.writeFile);
 
 app.use(bodyParser.json());
