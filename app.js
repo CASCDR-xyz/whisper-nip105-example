@@ -24,15 +24,6 @@ const {
 const util = require('util');
 */
 
-const { exec } = require('child_process');
-const fs = require('fs');
-const fs_promises = require('fs').promises;
-const path = require('path');
-
-const axios = require("axios");
-const { sleep } = require("./lib/common");
-const musicMetadata = require('music-metadata');
-
 // --------------------- MONGOOSE -----------------------------
 
 const mongoURI = process.env.MONGO_URI;
@@ -78,6 +69,12 @@ app.use((req, res, next) => {
 const port = process.env.PORT || 5004;
 
 // const writeFile = util.promisify(fs.writeFile);
+
+// ------------------- MOUNT ENDPOINT ROUTES -----------------------------
+
+app.use('/', serviceRoutes);
+
+// -------------------- POST OFFERINGS ------------------------------------
 
 
 async function run_periodic_tasks(){
