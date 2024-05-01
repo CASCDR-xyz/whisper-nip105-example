@@ -1,4 +1,26 @@
+// external dependencies
 const express = require('express');
+const WebSocket = require("ws");
+const cors = require('cors');
+const bodyParser = require("body-parser");
+const mongoose = require('mongoose');
+
+// middleware
+const logger = require('./middleware/logger');
+
+// routes
+const serviceRoutes = require('./routes/service');
+
+// used for testing
+const {JobRequest} = require('./models/jobRequest')
+const {postOfferings} = require('./lib/postOfferings')
+const { 
+  validatePreimage, 
+  validateCascdrUserEligibility 
+} = require('./lib/authChecks');
+const runWhisperLocally = false;
+
+//temp 
 const multer = require('multer');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -7,11 +29,8 @@ const util = require('util');
 const path = require('path');
 require('dotenv').config();
 
-const WebSocket = require("ws");
-const cors = require('cors');
 const axios = require("axios");
 const bolt11 = require("bolt11");
-const bodyParser = require("body-parser");
 const { getBitcoinPrice } = require('./lib/bitcoinPrice');
 const {
   relayInit,
@@ -27,7 +46,7 @@ const {
 } = require("./lib/defines.js");
 const { sleep } = require("./lib/helpers");
 const musicMetadata = require('music-metadata');
-const runWhisperLocally = false;
+
 
 global.WebSocket = WebSocket;
 
@@ -451,18 +470,6 @@ app.get("/:service/:payment_hash/get_result", async (req, res) => {
   }
 });
 
-app.get("/:service/:payment_hash/check_payment", async (req, res) => {
-  try {
-    const paymentHash = req.params.payment_hash;
-    const { isPaid, invoice } = await getIsInvoicePaid(paymentHash);
-
-    res.status(200).json({ invoice, isPaid });
-  } catch (e) {
-    console.log(e.toString().substring(0, 50));
-    res.status(500).send(e);
-  }
-});
-
 function submitService(service, data) {
   switch (service) {
     case "WHSPR":
@@ -499,7 +506,7 @@ async function callWhisper(data, runWhisperLocally) {
                 // Return the transcription response
                 resolve(stdout);
             });
-        } else {////
+        } else {
             try {
               console.log(`Calling whisper...`)
                 const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', 
@@ -536,12 +543,6 @@ async function deleteFile(path){
       console.error(`Error deleting file ${path}:`, err);
   }
 }
-
-
-app.get('/', (req, res) => {
-  res.status(200).send("Send your POST request to /WHSPR for transcriptions ")
-});
-
 
 // Function to download a remote file and return its local path
 async function downloadRemoteFile(remoteUrl) {
