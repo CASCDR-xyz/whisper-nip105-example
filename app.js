@@ -114,7 +114,7 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
 
       // Process the downloaded file and generate an invoice
       const service = req.params.service;
-      const invoice = await generateInvoice(service, durationInSeconds);
+      const invoice = await generateInvoice(service, upload.single('audio'),);
 
       // Save necessary data to the database
       const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
@@ -180,55 +180,6 @@ app.post("/:service", upload.single('audio'), async (req, res) => {
   }
 });
 
-app.get("/:service/:payment_hash/get_result", async (req, res) => {
-  console.log("get_result requested")
-  try {
-    const service = req.params.service;
-    const paymentHash = req.params.payment_hash;
-    const { isPaid, invoice } = await getIsInvoicePaid(paymentHash);
-
-    logState(service, paymentHash, "POLL");
-    if (isPaid != true) {
-      res.status(402).send({ ...invoice, isPaid });
-    } else {
-      const doc = await findJobRequestByPaymentHash(paymentHash);
-
-      switch (doc.state) {
-        case "WORKING":
-          logState(service, paymentHash, "WORKING");
-          res.status(202).send({ state: doc.state });
-          break;
-        case "ERROR":
-        case "DONE":
-          logState(service, paymentHash, doc.state);
-          res.status(200).send(doc.requestResponse);
-          break;
-        default:
-          logState(service, paymentHash, "PAID");
-          const data = doc.requestData;
-          submitService(service, data)
-            .then(async (response) => {
-              doc.requestResponse = response;
-              doc.state = "DONE";
-              await doc.save();
-            })
-            .catch(async (e) => {
-              doc.requestResponse = e;
-              doc.state = "ERROR";
-              await doc.save();
-            });
-
-          doc.state = "WORKING";
-          await sleep(1000)
-          await doc.save();
-          res.status(202).send({ state: doc.state });
-      }
-    }
-  } catch (e) {
-    console.log(e.toString().substring(0, 300));
-    res.status(500).send(e);
-  }
-});
 
 async function run_periodic_tasks(){
   postOfferings();
