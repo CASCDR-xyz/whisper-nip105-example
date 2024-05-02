@@ -14,6 +14,7 @@ const {
 
 exports.postService = asyncHandler(async (req,res,next) =>{
     const authAllowed = req.body?.authAllowed;
+    console.log(`postService req.body:`,JSON.stringify(req.body, null, 2));
     const service = req.params.service;
     if (authAllowed) {
       // Simulate successful payment and service execution
@@ -49,6 +50,9 @@ exports.postService = asyncHandler(async (req,res,next) =>{
       return;
     }
     try {
+        const metadata = await musicMetadata.parseFile(req.file.path);
+        const durationInSeconds = metadata.format.duration;
+        const invoice = await generateInvoice(service,durationInSeconds);
       const successAction =  {
         tag: "url",
         url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
@@ -108,7 +112,7 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         console.log("MP3 duration in seconds:", durationInSeconds);
 
         if (!req.file) {
-        return res.status(400).send('No file uploaded.');
+            return res.status(400).send('No file uploaded.');
         }
         const service = req.params.service;
         const uploadedFilePath = req.file.path;
