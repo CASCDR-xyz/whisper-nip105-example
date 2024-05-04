@@ -74,8 +74,7 @@ exports.postService = asyncHandler(async (req,res,next) =>{
                 const service = req.params.service;
                 const invoice = await generateInvoice(service, durationInSeconds);
 
-                // Save necessary data to the database
-                const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
+                // save necessary data to the DB
                 doc.requestData["remote_url"] = remoteUrl;
                 doc.requestData["filePath"] = mp3Path;
                 }
