@@ -51,15 +51,6 @@ exports.postService = asyncHandler(async (req,res,next) =>{
       return;
     }
     try {
-        const metadata = await musicMetadata.parseFile(req.file.path);
-        const durationInSeconds = metadata.format.duration;
-        const invoice = await generateInvoice(service,durationInSeconds);
-      const successAction =  {
-        tag: "url",
-        url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
-        description: "Open to get the confirmation code for your purchase."
-      };
-  
       const remoteUrl = req.body.remote_url;
       if (remoteUrl) {
         // Remote URL provided, download and process it
@@ -94,6 +85,11 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         // Process the downloaded file and generate an invoice
         const service = req.params.service;
         const invoice = await generateInvoice(service, upload.single('audio'));
+        const successAction =  {
+            tag: "url",
+            url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
+            description: "Open to get the confirmation code for your purchase."
+        };
 
         // Save necessary data to the database
         const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
@@ -136,6 +132,11 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         }
 
         const invoice = await generateInvoice(service,durationInSeconds);
+        const successAction =  {
+            tag: "url",
+            url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
+            description: "Open to get the confirmation code for your purchase."
+        };
         console.log("invoice:",invoice)
         const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
 
