@@ -129,7 +129,7 @@ exports.postService = asyncHandler(async (req,res,next) =>{
 
         // Process the downloaded file and generate an invoice
         const service = req.params.service;
-        const invoice = await generateInvoice(service, upload.single('audio'));
+        const invoice = await generateInvoice(service, durationInSeconds);
         const successAction =  {
             tag: "url",
             url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
@@ -138,7 +138,8 @@ exports.postService = asyncHandler(async (req,res,next) =>{
 
         // Save necessary data to the database
         const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
-        doc.requestData = { remote_url: remoteUrl };
+        doc.requestData = req.body;
+        doc.requestData["remote_url"] = remoteUrl;
         doc.requestData["filePath"] = mp3Path;
         doc.state = "NOT_PAID";
         await doc.save();
@@ -184,7 +185,6 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         };
         console.log("invoice:",invoice)
         const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
-
         doc.requestData = req.body;
         doc.requestData["filePath"] = mp3Path;
         doc.state = "NOT_PAID";

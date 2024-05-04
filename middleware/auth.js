@@ -8,7 +8,12 @@ const EndpointRequestedTypes = {
 };
 
 const auth = async (req, res, next) => {
-    console.log("auth middleware running...")
+    console.log("auth middleware running...");
+    // skips auth middleware if needed for testing as if hmac received
+    /*req.body.authAllowed = true;
+    req.body.authCategory = 0;
+    next();
+    return;*/
     try{
         const authHeader = req.headers?.authorization;
         const paymentHash = req.params?.payment_hash;
