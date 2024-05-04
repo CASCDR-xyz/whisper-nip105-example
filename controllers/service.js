@@ -33,8 +33,54 @@ exports.postService = asyncHandler(async (req,res,next) =>{
           doc.status = "PAID";
           doc.state = "NOT_PAID";//set invoice to paid but work status as NOT_PAID to force run
           doc.requestData = req.body;
-          doc.requestData["filePath"] = req?.file?.path;
-          await doc.save();
+          if(req?.file?.path){
+            // file was uploaded, use that path
+              doc.requestData["filePath"] = req?.file?.path;
+          }
+          else{
+            // download file from link if file was not uploaded
+            const remoteUrl = req.body?.remote_url;
+            if (remoteUrl) {
+                // Remote URL provided, download and process it
+                const urlObj = new URL(remoteUrl);
+                
+                const isMp4InPath = urlObj.pathname.toLowerCase().endsWith(".mp4");
+                const isMp4InMimeType = urlObj.searchParams.get("mime") === "video/mp4";
+                const isMp4 = isMp4InPath || isMp4InMimeType;
+                const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || isMp4;
+                console.log(`urlObj:${urlObj}`)
+                if (!isMp3OrMp4) {
+                return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
+                }
+
+                // Download the remote file
+                const downloadedFilePath = await downloadRemoteFile(remoteUrl);
+                var mp3Path = downloadedFilePath;
+                console.log(`downloadedFilePath:${downloadedFilePath}`)
+                console.log(`isMp4:${isMp4}`)
+                if(isMp4){
+                mp3Path = downloadedFilePath.replace(".mp4", ".mp3");
+                await extractAudioFromMp4(downloadedFilePath, mp3Path);
+                }
+
+                if(!validateAudioSize(mp3Path)){
+                res.status(400).send("File is too large to transcribe. The limit is 25MB.")
+                }
+
+                // Determine the duration of the downloaded file
+                const durationInSeconds = await getAudioDuration(mp3Path);
+
+                // Process the downloaded file and generate an invoice
+                const service = req.params.service;
+                const invoice = await generateInvoice(service, durationInSeconds);
+
+                // Save necessary data to the database
+                const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
+                doc.requestData["remote_url"] = remoteUrl;
+                doc.requestData["filePath"] = mp3Path;
+                }
+            await doc.save();
+          }
 
           const successAction =  {
             tag: "url",
