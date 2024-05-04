@@ -1,5 +1,5 @@
 const express = require('express');
-const { postService, getResult } = require('../controllers/service');
+const { postService, getResult, testLogger } = require('../controllers/service');
 const auth =  require('../middleware/auth');
 const { upload } = require('../lib/fileManagement')
 
@@ -8,10 +8,14 @@ const router = express.Router();
 
 router
     .route('/:service')
-    .post(auth, upload.single('audio'), postService);
+    .post(upload.single('audio'), auth, postService);
 
 router
     .route('/:service/:payment_hash/get_result')
     .get(auth, getResult);
+
+/*router
+    .route('/:service/test')
+    .post(upload.single('audio'), auth, testLogger)*/
 
 module.exports = router;

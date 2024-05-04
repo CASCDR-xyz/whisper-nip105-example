@@ -33,6 +33,7 @@ exports.postService = asyncHandler(async (req,res,next) =>{
           doc.status = "PAID";
           doc.state = "NOT_PAID";//set invoice to paid but work status as NOT_PAID to force run
           doc.requestData = req.body;
+          doc.requestData["filePath"] = req?.file?.path;
           await doc.save();
 
           const successAction =  {
@@ -185,6 +186,8 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
         else {
             const doc = await findJobRequestByPaymentHash(paymentHash);
 
+            //console.log(`requestData: ${JSON.stringify(doc.requestData, null, 2)}`);
+
             switch (doc.state) {
             case "WORKING":
                 logState(service, paymentHash, "WORKING");
@@ -214,8 +217,6 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                     console.log("submitService error:", e)
                 }
 
-                doc.state = "WORKING";
-                await sleep(1000)
                 await doc.save();
                 res.status(202).send({ state: doc.state });
             }
@@ -224,4 +225,13 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
     console.log(e.toString().substring(0, 300));
     res.status(500).send(e);
     }
+});
+
+exports.testLogger = asyncHandler(async (req, res, next) => {
+
+    console.log(`postTest req.body:`, JSON.stringify(req.body, null, 2));
+    if (req?.file) {
+        console.log('Uploaded File Path:', req?.file?.path);
+    }
+    res.status(200).send({'test': 'test'});
 });
