@@ -36,6 +36,7 @@ exports.postService = asyncHandler(async (req,res,next) =>{
           if(req?.file?.path){
             // file was uploaded, use that path
               doc.requestData["filePath"] = req?.file?.path;
+              await doc.save();
           }
           else{
             // download file from link if file was not uploaded
