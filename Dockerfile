@@ -17,8 +17,7 @@ RUN apt-get update && apt-get install -y \
     git \
     ffmpeg \
     build-essential \
-    libopenblas-dev \
-    @deepgram/sdk
+    libopenblas-dev
 
 # Install Node.js dependencies
 RUN npm install
