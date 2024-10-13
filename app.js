@@ -78,12 +78,12 @@ app.use('/', serviceRoutes);
 
 
 async function run_periodic_tasks(){
-  postOfferings();
+  // postOfferings();
   houseKeeping();
 }
 
 
-postOfferings();
+// postOfferings();
 houseKeeping();
 setInterval(run_periodic_tasks, 300000);
 
