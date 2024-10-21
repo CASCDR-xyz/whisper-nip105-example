@@ -7,6 +7,7 @@ const musicMetadata = require('music-metadata');
 const {
     upload,
     extractAudioFromMp4,
+    extractAudioFromVideo,
     downloadRemoteFile,
     validateAudioSize,
     getAudioDuration
@@ -14,10 +15,19 @@ const {
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
 
-exports.postService = asyncHandler(async (req,res,next) =>{
+const ALLOWED_AUDIO_FORMATS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a'];
+const ALLOWED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.wmv', '.flv', '.webm'];
+
+function isAllowedFormat(filename) {
+    const ext = path.extname(filename).toLowerCase();
+    return ALLOWED_AUDIO_FORMATS.includes(ext) || ALLOWED_VIDEO_FORMATS.includes(ext);
+}
+
+exports.postService = asyncHandler(async (req, res, next) => {
     const authAllowed = req.body?.authAllowed;
-    console.log(`postService req.body:`,JSON.stringify(req.body, null, 2));
+    console.log(`postService req.body:`, JSON.stringify(req.body, null, 2));
     const service = req.params.service;
+
     if (authAllowed) {
         const fakePaymentHash = crypto.randomBytes(20).toString('hex');
         const price = await getServicePrice(service, 10);
@@ -27,37 +37,36 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         doc.status = "PAID";
         doc.state = "NOT_PAID";
         doc.requestData = req.body;
-        if(req?.file?.path){
+        if (req?.file?.path) {
             doc.requestData["filePath"] = path.basename(req.file.path);
             await doc.save();
         } else {
             const remoteUrl = req.body?.remote_url;
             if (remoteUrl) {
                 const urlObj = new URL(remoteUrl);
-                const isMp4InPath = urlObj.pathname.toLowerCase().endsWith(".mp4");
-                const isMp4InMimeType = urlObj.searchParams.get("mime") === "video/mp4";
-                const isMp4 = isMp4InPath || isMp4InMimeType;
-                const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || isMp4;
-                console.log(`urlObj:${urlObj}`)
-                if (!isMp3OrMp4) {
-                    return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
+                if (!isAllowedFormat(urlObj.pathname)) {
+                    return res.status(400).send('Invalid file format. Supported formats: ' + 
+                        ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
                 }
                 const downloadedFilePath = await downloadRemoteFile(remoteUrl);
-                var mp3Path = downloadedFilePath;
-                console.log(`downloadedFilePath:${downloadedFilePath}`)
-                console.log(`isMp4:${isMp4}`)
-                if(isMp4){
-                    mp3Path = downloadedFilePath.replace(".mp4", ".mp3");
-                    await extractAudioFromMp4(downloadedFilePath, mp3Path);
+                let audioFilePath = downloadedFilePath;
+                const fileExtension = path.extname(downloadedFilePath).toLowerCase();
+
+                if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
+                    audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
+                    await extractAudioFromVideo(downloadedFilePath, audioFilePath);
+                } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
+                    audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
+                    await convertToMp3(downloadedFilePath, audioFilePath);
                 }
-                if(!validateAudioSize(mp3Path)){
-                    res.status(400).send("File is too large to transcribe. The limit is 25MB.")
+
+                if (!validateAudioSize(audioFilePath)) {
+                    return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
                 }
-                const durationInSeconds = await getAudioDuration(mp3Path);
-                const service = req.params.service;
+                const durationInSeconds = await getAudioDuration(audioFilePath);
                 const invoice = await generateInvoice(service, durationInSeconds);
                 doc.requestData["remote_url"] = remoteUrl;
-                doc.requestData["filePath"] = path.basename(mp3Path);
+                doc.requestData["filePath"] = path.basename(audioFilePath);
             }
             await doc.save();
         }
@@ -69,84 +78,68 @@ exports.postService = asyncHandler(async (req,res,next) =>{
         res.status(200).send({paymentHash: fakePaymentHash, authCategory: req.body.authCategory, successAction});
         return;
     }
+
     try {
-        const remoteUrl = req.body.remote_url;
-        if (remoteUrl) {
+        let audioFilePath;
+        let originalFilePath;
+
+        if (req.body.remote_url) {
+            const remoteUrl = req.body.remote_url;
             const urlObj = new URL(remoteUrl);
-            const isMp4InPath = urlObj.pathname.toLowerCase().endsWith(".mp4");
-            const isMp4InMimeType = urlObj.searchParams.get("mime") === "video/mp4";
-            const isMp4 = isMp4InPath || isMp4InMimeType;
-            const isMp3OrMp4 = urlObj.pathname.toLowerCase().endsWith(".mp3") || isMp4;
-            console.log(`urlObj:${urlObj}`)
-            if (!isMp3OrMp4) {
-                return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
+            
+            if (!isAllowedFormat(urlObj.pathname)) {
+                return res.status(400).send('Invalid file format. Supported formats: ' + 
+                    ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
             }
-            const downloadedFilePath = await downloadRemoteFile(remoteUrl);
-            var mp3Path = downloadedFilePath;
-            console.log(`downloadedFilePath:${downloadedFilePath}`)
-            console.log(`isMp4:${isMp4}`)
-            if(isMp4){
-                mp3Path = downloadedFilePath.replace(".mp4", ".mp3");
-                await extractAudioFromMp4(downloadedFilePath, mp3Path);
+
+            originalFilePath = await downloadRemoteFile(remoteUrl);
+        } else if (req.file) {
+            if (!isAllowedFormat(req.file.originalname)) {
+                return res.status(400).send('Invalid file format. Supported formats: ' + 
+                    ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
             }
-            if(!validateAudioSize(mp3Path)){
-                res.status(400).send("File is too large to transcribe. The limit is 25MB.")
-            }
-            const durationInSeconds = await getAudioDuration(mp3Path);
-            const service = req.params.service;
-            const invoice = await generateInvoice(service, durationInSeconds);
-            const successAction = {
-                tag: "url",
-                url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
-                description: "Open to get the confirmation code for your purchase."
-            };
-            const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
-            doc.requestData = req.body;
-            doc.requestData["remote_url"] = remoteUrl;
-            doc.requestData["filePath"] = path.basename(mp3Path);
-            doc.state = "NOT_PAID";
-            await doc.save();
-            logState(service, invoice.paymentHash, "REQUESTED");
-            res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
+            originalFilePath = req.file.path;
         } else {
-            const metadata = await musicMetadata.parseFile(req.file.path);
-            const durationInSeconds = metadata.format.duration;
-            console.log("MP3 duration in seconds:", durationInSeconds);
-            if (!req.file) {
-                return res.status(400).send('No file uploaded.');
-            }
-            const service = req.params.service;
-            const uploadedFilePath = req.file.path;
-            const isMp4InPath = uploadedFilePath.toLowerCase().endsWith(".mp4");
-            const isMp4 = isMp4InPath;
-            const isMp3OrMp4 = uploadedFilePath.toLowerCase().endsWith(".mp3") || isMp4;
-            console.log(`uploadedFilePath:${uploadedFilePath}`)
-            if (!isMp3OrMp4) {
-                return res.status(400).send('Invalid file format. Only mp3 and mp4 are supported.');
-            }
-            var mp3Path = uploadedFilePath;
-            if(isMp4){
-                mp3Path = uploadedFilePath.replace(".mp4", ".mp3");
-                await extractAudioFromMp4(uploadedFilePath, mp3Path);
-            }
-            if(!validateAudioSize(mp3Path)){
-                res.status(400).send("File is too large to transcribe. The limit is 25MB.")
-            }
-            const invoice = await generateInvoice(service,durationInSeconds);
-            const successAction = {
-                tag: "url",
-                url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
-                description: "Open to get the confirmation code for your purchase."
-            };
-            console.log("invoice:",invoice)
-            const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
-            doc.requestData = req.body;
-            doc.requestData["filePath"] = path.basename(mp3Path);
-            doc.state = "NOT_PAID";
-            await doc.save();
-            logState(service, invoice.paymentHash, "REQUESTED");
-            res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
+            return res.status(400).send('No file uploaded or remote URL provided.');
         }
+
+        const fileExtension = path.extname(originalFilePath).toLowerCase();
+
+        if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
+            audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
+            await extractAudioFromVideo(originalFilePath, audioFilePath);
+        } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
+            audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
+            await convertToMp3(originalFilePath, audioFilePath);
+        } else {
+            audioFilePath = originalFilePath;
+        }
+
+        if (!validateAudioSize(audioFilePath)) {
+            return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
+        }
+
+        const durationInSeconds = await getAudioDuration(audioFilePath);
+        const invoice = await generateInvoice(service, durationInSeconds);
+
+        const successAction = {
+            tag: "url",
+            url: `${process.env.ENDPOINT}/${service}/${invoice.paymentHash}/get_result`,
+            description: "Open to get the confirmation code for your purchase."
+        };
+
+        const doc = await findJobRequestByPaymentHash(invoice.paymentHash);
+        doc.requestData = req.body;
+        doc.requestData["filePath"] = path.basename(audioFilePath);
+        if (req.body.remote_url) {
+            doc.requestData["remote_url"] = req.body.remote_url;
+        }
+        doc.state = "NOT_PAID";
+        await doc.save();
+
+        logState(service, invoice.paymentHash, "REQUESTED");
+        res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
+
     } catch (e) {
         console.log(e.toString().substring(0, 150));
         res.status(500).send(e);
