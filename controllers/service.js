@@ -10,7 +10,8 @@ const {
     extractAudioFromVideo,
     downloadRemoteFile,
     validateAudioSize,
-    getAudioDuration
+    getAudioDuration,
+    convertToMp3
 } = require('../lib/fileManagement');
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
