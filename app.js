@@ -43,13 +43,27 @@ require("dotenv").config();
 global.WebSocket = WebSocket;
 
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+const corsOptions = {
+  origin: ['https://cascdr.xyz', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true,
+  maxAge: 600, // Preflight results can be cached for 10 minutes
+  optionsSuccessStatus: 200,
+  timeout: 60000 // Increase timeout to 60 seconds
+};
 
-app.options('*', cors());
+// Apply CORS configuration
+app.use(cors(corsOptions));
+
+// Enable pre-flight requests for all routes
+app.options('*', cors(corsOptions));
+
+// Increase server timeout settings
+app.use((req, res, next) => {
+  res.setTimeout(60000); // 60 seconds timeout for all requests
+  next();
+});
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
