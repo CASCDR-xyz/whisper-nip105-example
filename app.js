@@ -1,93 +1,97 @@
-// external dependencies
 const express = require('express');
 const WebSocket = require("ws");
-const cors = require('cors');
 const bodyParser = require("body-parser");
 const mongoose = require('mongoose');
-
-// middleware
 const logger = require('./middleware/logger');
-
-// routes
 const serviceRoutes = require('./routes/service');
+const { postOfferings, houseKeeping } = require('./lib/postOfferings');
 
-// lib
-const { postOfferings, houseKeeping } = require('./lib/postOfferings')
-
-// used for testing
-/*
-const { JobRequest } = require('./models/jobRequest')
-const { 
-  validatePreimage, 
-  validateCascdrUserEligibility 
-} = require('./lib/authChecks');
-const util = require('util');
-*/
-
-// --------------------- MONGOOSE -----------------------------
-
-const mongoURI = process.env.MONGO_URI;
-
-mongoose.connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true });
-
-const db = mongoose.connection;
-db.on("error", console.error.bind(console, "MongoDB connection error:"));
-db.once("open", () => {
-  console.log("Connected to MongoDB!");
-});
-
-// --------------------- APP SETUP -----------------------------
-
-const app = express();
 require("dotenv").config();
 global.WebSocket = WebSocket;
 
+const app = express();
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-app.options('*', cors());
-
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-app.set('trust proxy', true); // trust first proxy
-
-// Request Logging
-app.use(logger);
-
+// CORS setup first
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Allow requests from any origin (*)
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Origin', 'https://cascdr.xyz');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+  res.header('X-Content-Type-Options', 'nosniff');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(204).send();
+  }
   next();
 });
 
-const port = process.env.PORT || 5004;
+// Basic middleware
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.set('trust proxy', true);
+app.use(logger);
 
-// const writeFile = util.promisify(fs.writeFile);
+// MongoDB setup
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000
+    });
+    console.log('Connected to MongoDB');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+};
 
-// ------------------- MOUNT ENDPOINT ROUTES -----------------------------
+// Error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error'
+  });
+});
 
+// Routes
 app.use('/', serviceRoutes);
 
-// -------------------- POST OFFERINGS ------------------------------------
-
-
-async function run_periodic_tasks(){
-  // postOfferings();
+// Periodic tasks
+async function run_periodic_tasks() {
   houseKeeping();
 }
 
-
-// postOfferings();
 houseKeeping();
 setInterval(run_periodic_tasks, 300000);
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Whisper Server is listening on port ${port}`);
-});
+// Start server
+const port = process.env.PORT || 5004;
+const startServer = async () => {
+  try {
+    await connectDB();
+    const server = app.listen(port, () => {
+      console.log(`Whisper Server running on port ${port}`);
+    });
+
+    ['SIGTERM', 'SIGINT'].forEach(signal => {
+      process.on(signal, () => {
+        console.log('Shutting down...');
+        server.close(async () => {
+          await mongoose.connection.close();
+          process.exit(0);
+        });
+      });
+    });
+
+  } catch (error) {
+    console.error('Server startup failed:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+module.exports = app;
