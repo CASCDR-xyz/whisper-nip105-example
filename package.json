@@ -25,6 +25,7 @@
     "nostr-tools": "^1.17.0",
     "uuid": "^9.0.1",
     "whisper": "^0.2.5",
-    "ws": "^8.17.0"
+    "ws": "^8.17.0",
+    "cascdr-utils": "github:Luke-Lowery/CascdrUtils"
   }
 }
