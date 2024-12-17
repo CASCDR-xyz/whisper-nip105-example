@@ -20,13 +20,6 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libopenblas-dev
 
-# force git to use https instead of ssh
-RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-RUN git config --global url."https://github.com/".insteadOf "git@github.com:"
-
-# Use the GITHUB_TOKEN to install private npm dependencies
-RUN npm install https://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@github.com/Luke-Lowery/CascdrUtils.git
-
 # Install Node.js dependencies
 RUN npm install
 
