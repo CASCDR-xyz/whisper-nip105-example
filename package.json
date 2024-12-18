@@ -10,6 +10,7 @@
   "author": "uncleJim21",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.713.0",
     "@deepgram/sdk": "^3.4.1",
     "axios": "^1.5.1",
     "body-parser": "^1.20.2",
