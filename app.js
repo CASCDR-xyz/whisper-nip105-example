@@ -13,7 +13,7 @@ const app = express();
 
 // CORS setup first
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://cascdr.xyz');
+  res.header('Access-Control-Allow-Origin', 'https://cascdr.xyz','http://localhost:3000');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
   res.header('Access-Control-Allow-Credentials', 'true');
