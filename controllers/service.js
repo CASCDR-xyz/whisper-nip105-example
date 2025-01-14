@@ -28,12 +28,24 @@ exports.postService = asyncHandler(async (req, res, next) => {
     const authAllowed = req.body?.authAllowed;
     console.log(`postService req.body:`, JSON.stringify(req.body, null, 2));
     const service = req.params.service;
+    const heartbeatDisabled = req.body?.heartbeatDisabled || false;
 
-    // Start a periodic heartbeat to keep the connection alive
-    const heartbeatInterval = setInterval(() => {
-        res.flushHeaders(); // Flush headers periodically
-        console.log('Flushed headers to keep the connection alive.');
-    }, 5000); // Every 5 seconds
+    let heartbeatInterval = null;
+    let heartbeatCount = 0;
+    const maxHeartbeatCount = 5;
+    if(!heartbeatDisabled) {
+        // Start a periodic heartbeat to keep the connection alive
+        heartbeatInterval = setInterval(() => {
+            res.flushHeaders(); // Flush headers periodically
+            console.log('Flushed headers to keep the connection alive.');
+
+            heartbeatCount++;
+            if (heartbeatCount >= maxHeartbeatCount) {
+                console.log('Heartbeat limit reached. Clearing interval.');
+                clearInterval(heartbeatInterval);
+            }
+        }, 15000); // Every 15 seconds
+    }
 
     if (authAllowed) {
         const fakePaymentHash = crypto.randomBytes(20).toString('hex');
@@ -82,9 +94,11 @@ exports.postService = asyncHandler(async (req, res, next) => {
             url: `${process.env.ENDPOINT}/${service}/${fakePaymentHash}/get_result`,
             description: "Open to get the confirmation code for your purchase."
         };
-        res.status(200).send({paymentHash: fakePaymentHash, authCategory: req.body.authCategory, successAction});
         // Clear the heartbeat when the process is complete
-        clearInterval(heartbeatInterval);
+        if(heartbeatInterval !== null) {
+            clearInterval(heartbeatInterval);
+        }
+        res.status(200).send({paymentHash: fakePaymentHash, authCategory: req.body.authCategory, successAction});
         return;
     }
 
@@ -97,25 +111,31 @@ exports.postService = asyncHandler(async (req, res, next) => {
             const urlObj = new URL(remoteUrl);
             
             if (!isAllowedFormat(urlObj.pathname)) {
+                // Clear the heartbeat on error
+                if(heartbeatInterval !== null) {
+                    clearInterval(heartbeatInterval);
+                }
                 return res.status(400).send('Invalid file format. Supported formats: ' + 
                     ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
-                // Clear the heartbeat on error
-                clearInterval(heartbeatInterval);
             }
 
             originalFilePath = await downloadRemoteFile(remoteUrl);
         } else if (req.file) {
             if (!isAllowedFormat(req.file.originalname)) {
+                // Clear the heartbeat on error
+                if(heartbeatInterval !== null) {
+                    clearInterval(heartbeatInterval);
+                }
                 return res.status(400).send('Invalid file format. Supported formats: ' + 
                     ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
-                // Clear the heartbeat on error
-                clearInterval(heartbeatInterval);
             }
             originalFilePath = req.file.path;
         } else {
-            return res.status(400).send('No file uploaded or remote URL provided.');
             // Clear the heartbeat on error
-            clearInterval(heartbeatInterval);
+            if(heartbeatInterval !== null) {
+                clearInterval(heartbeatInterval);
+            }
+            return res.status(400).send('No file uploaded or remote URL provided.');
         }
 
         const fileExtension = path.extname(originalFilePath).toLowerCase();
@@ -131,9 +151,11 @@ exports.postService = asyncHandler(async (req, res, next) => {
         }
 
         if (!validateAudioSize(audioFilePath)) {
-            return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
             // Clear the heartbeat on error
-            clearInterval(heartbeatInterval);
+            if(heartbeatInterval !== null) {
+                clearInterval(heartbeatInterval);
+            }
+            return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
         }
 
         const durationInSeconds = await getAudioDuration(audioFilePath);
@@ -155,15 +177,19 @@ exports.postService = asyncHandler(async (req, res, next) => {
         await doc.save();
 
         logState(service, invoice.paymentHash, "REQUESTED");
-        res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
         // Clear the heartbeat when finished
-        clearInterval(heartbeatInterval);
+        if(heartbeatInterval !== null) {
+            clearInterval(heartbeatInterval);
+        }
+        res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
 
     } catch (e) {
         console.log(e.toString().substring(0, 150));
-        res.status(500).send(e);
         // Clear the heartbeat on error
-        clearInterval(heartbeatInterval);
+        if(heartbeatInterval !== null) {
+            clearInterval(heartbeatInterval);
+        }
+        res.status(500).send(e);
     }
 });
 
@@ -186,6 +212,7 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
         const authAllowed = req.body.authAllowed;
         const authCategory = req.body.authCategory;
         const shouldSkipPaidVerify = authCategory === 1;
+        const heartbeatDisabled = req.body?.heartbeatDisabled || false;
         const { invoice, isPaid } = await getIsInvoicePaid(paymentHash, shouldSkipPaidVerify);
         const successAction =  {
             tag: "url",
@@ -193,17 +220,30 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
             description: "Open to get the confirmation code for your purchase."
         };
 
-        // Start a periodic heartbeat to keep the connection alive
-        const heartbeatInterval = setInterval(() => {
-            res.flushHeaders(); // Flush headers periodically
-            console.log('Flushed headers to keep the connection alive.');
-        }, 5000); // Every 5 seconds
+        let heartbeatInterval = null;
+        let heartbeatCount = 0;
+        const maxHeartbeatCount = 5;
+        if(!heartbeatDisabled) {
+            // Start a periodic heartbeat to keep the connection alive
+            heartbeatInterval = setInterval(() => {
+                res.flushHeaders(); // Flush headers periodically
+                console.log('Flushed headers to keep the connection alive.');
+
+                heartbeatCount++;
+                if (heartbeatCount >= maxHeartbeatCount) {
+                    console.log('Heartbeat limit reached. Clearing interval.');
+                    clearInterval(heartbeatInterval);
+                }
+            }, 15000); // Every 15 seconds
+        }
 
         logState(service, paymentHash, "POLL");
         if (!authAllowed && !isPaid) {
-            res.status(402).send({ ...invoice, isPaid, authCategory, successAction});
             // Clear the heartbeat if unpaid
-            clearInterval(heartbeatInterval);
+            if(heartbeatInterval !== null) {
+                clearInterval(heartbeatInterval);
+            }
+            res.status(402).send({ ...invoice, isPaid, authCategory, successAction});
         } 
         else {
             const doc = await findJobRequestByPaymentHash(paymentHash);
@@ -213,16 +253,20 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
             switch (doc.state) {
             case "WORKING":
                 logState(service, paymentHash, "WORKING");
-                res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
                 // Clear the heartbeat if still working
-                clearInterval(heartbeatInterval);
+                if(heartbeatInterval !== null) {
+                    clearInterval(heartbeatInterval);
+                }
+                res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
                 break;
             case "ERROR":
             case "DONE":
                 logState(service, paymentHash, doc.state);
-                res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                 // Clear the heartbeat when done
-                clearInterval(heartbeatInterval);
+                if(heartbeatInterval !== null) {
+                    clearInterval(heartbeatInterval);
+                }
+                res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                 break;
             default:
                 logState(service, paymentHash, "PAID");
@@ -237,9 +281,11 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                     console.log(`DONE ${service} ${paymentHash} ${response}`);
                     await doc.save();
                     console.log("Doc saved!")
-                    res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                     // Clear the heartbeat when complete
-                    clearInterval(heartbeatInterval);
+                    if(heartbeatInterval !== null) {
+                        clearInterval(heartbeatInterval);
+                    }
+                    res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                     return;
                 } catch (e) {
                     doc.requestResponse = e;
@@ -249,16 +295,20 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                 }
 
                 await doc.save();
-                res.status(202).send({ state: doc.state });
                 // Clear the heartbeat when complete
-                clearInterval(heartbeatInterval);
+                if(heartbeatInterval !== null) {
+                    clearInterval(heartbeatInterval);
+                }
+                res.status(202).send({ state: doc.state });
             }
         }
     } catch (e) {
     console.log(e.toString().substring(0, 300));
-    res.status(500).send(e);
     // Clear the heartbeat on error
-    clearInterval(heartbeatInterval);
+    if(heartbeatInterval !== null) {
+        clearInterval(heartbeatInterval);
+    }
+    res.status(500).send(e);
     }
 });
 
