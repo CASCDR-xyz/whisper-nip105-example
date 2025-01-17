@@ -44,7 +44,7 @@ exports.postService = asyncHandler(async (req, res, next) => {
                 console.log('Heartbeat limit reached. Clearing interval.');
                 clearInterval(heartbeatInterval);
             }
-        }, 15000); // Every 15 seconds
+        }, 20000); // Every 20 seconds
     }
 
     if (authAllowed) {
@@ -234,7 +234,7 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                     console.log('Heartbeat limit reached. Clearing interval.');
                     clearInterval(heartbeatInterval);
                 }
-            }, 15000); // Every 15 seconds
+            }, 20000); // Every 20 seconds
         }
 
         logState(service, paymentHash, "POLL");
