@@ -6,6 +6,18 @@ const logger = require('./middleware/logger');
 const serviceRoutes = require('./routes/service');
 const { postOfferings, houseKeeping } = require('./lib/postOfferings');
 
+// Global error handlers to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('UNCAUGHT EXCEPTION! 💥 Shutting down gracefully...', error);
+  console.error(error.stack);
+  // Log to external service or file if needed
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION! 💥', reason);
+  // Log to external service or file if needed
+});
+
 require("dotenv").config();
 global.WebSocket = WebSocket;
 

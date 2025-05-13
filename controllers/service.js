@@ -284,21 +284,46 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                     clearInterval(heartbeatInterval);
                     clearTimeout(maxTimeout);
                     
-                    // Update document with error
-                    doc.requestResponse = { error: e.message || e.toString() };
-                    doc.state = "ERROR";
-                    await doc.save();
                     console.log("submitService error:", e);
+                    
+                    // Safely get error message
+                    let errorMessage = "Unknown error occurred";
+                    try {
+                        errorMessage = e.message || e.toString();
+                    } catch (messageError) {
+                        console.error("Could not extract error message:", messageError);
+                    }
+                    
+                    // Try to update document with error info
+                    try {
+                        doc.requestResponse = { error: errorMessage };
+                        doc.state = "ERROR";
+                        await doc.save();
+                    } catch (saveError) {
+                        console.error("Error saving error state to document:", saveError);
+                    }
                     
                     // Only send error response if connection is still open
                     if (!res.writableEnded) {
-                        res.write(JSON.stringify({
-                            state: "ERROR",
-                            error: e.message || e.toString(),
-                            authCategory,
-                            paymentHash
-                        }));
-                        res.end();
+                        try {
+                            res.write(JSON.stringify({
+                                state: "ERROR",
+                                error: errorMessage,
+                                authCategory,
+                                paymentHash
+                            }));
+                            res.end();
+                        } catch (responseError) {
+                            console.error("Error sending error response:", responseError);
+                            // Last resort - try to end the response
+                            try {
+                                if (!res.writableEnded) {
+                                    res.end();
+                                }
+                            } catch (endError) {
+                                console.error("Failed to end response:", endError);
+                            }
+                        }
                     }
                 }
                 return; // Exit function early since we're handling response manually
