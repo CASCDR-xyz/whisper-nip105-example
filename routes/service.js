@@ -14,8 +14,6 @@ router
     .route('/:service/:payment_hash/get_result')
     .get(auth, getResult);
 
-/*router
-    .route('/:service/test')
-    .post(upload.single('audio'), auth, testLogger)*/
+//force push
 
 module.exports = router;
