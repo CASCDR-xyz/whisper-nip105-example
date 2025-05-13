@@ -195,27 +195,113 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
             default:
                 logState(service, paymentHash, "PAID");
                 const data = doc.requestData;
-                // Use async/await to ensure sequential execution
+                
+                // Set the transcription process as working before starting
+                doc.state = "WORKING";
+                await doc.save();
+                
+                // Create a response with HTTP streaming to keep connection alive
+                res.writeHead(202, {
+                    'Content-Type': 'application/json',
+                    'Transfer-Encoding': 'chunked',
+                    'X-Accel-Buffering': 'no' // Disable nginx buffering
+                });
+                
+                // Initialize heartbeat counter
+                let heartbeatCount = 0;
+                
+                // Send initial status message
+                res.write(JSON.stringify({
+                    state: "WORKING",
+                    message: "Starting transcription process",
+                    heartbeat: heartbeatCount
+                }));
+                
+                // Set up the heartbeat interval (every 25 seconds to stay within 30s timeout)
+                const heartbeatInterval = setInterval(() => {
+                    heartbeatCount++;
+                    // Only send heartbeat if response is still writable
+                    if (!res.writableEnded) {
+                        res.write(JSON.stringify({
+                            state: "WORKING",
+                            message: "Transcription in progress",
+                            heartbeat: heartbeatCount
+                        }));
+                    }
+                }, 25000); // 25 seconds interval
+                
+                // Maximum timeout (15 minutes)
+                const maxTimeout = setTimeout(() => {
+                    if (!res.writableEnded) {
+                        clearInterval(heartbeatInterval);
+                        const timeoutError = "Transcription timeout after 15 minutes";
+                        console.error(timeoutError);
+                        
+                        // Update database with error
+                        doc.requestResponse = { error: timeoutError };
+                        doc.state = "ERROR";
+                        doc.save().catch(err => console.error("Error saving timeout status:", err));
+                        
+                        // Send final error response and end
+                        res.write(JSON.stringify({
+                            state: "ERROR",
+                            error: timeoutError
+                        }));
+                        res.end();
+                    }
+                }, 15 * 60 * 1000); // 15 minutes
+                
                 try {
                     const fullPath = path.join(TEMP_DIR, data.filePath);
+                    // Process the transcription
                     const response = await submitService(service, { ...data, filePath: fullPath });
+                    
+                    // Clean up timers
+                    clearInterval(heartbeatInterval);
+                    clearTimeout(maxTimeout);
+                    
+                    // Update document with results
                     console.log(`requestResponse:`,response);
                     doc.requestResponse = response;
                     doc.state = "DONE";
                     console.log(`DONE ${service} ${paymentHash} ${response}`);
                     await doc.save();
-                    console.log("Doc saved!")
-                    res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
-                    return;
+                    console.log("Doc saved!");
+                    
+                    // Only send final response if connection is still open
+                    if (!res.writableEnded) {
+                        res.write(JSON.stringify({
+                            ...response,
+                            state: "DONE",
+                            authCategory, 
+                            paymentHash, 
+                            successAction
+                        }));
+                        res.end();
+                    }
                 } catch (e) {
-                    doc.requestResponse = e;
+                    // Clean up timers on error
+                    clearInterval(heartbeatInterval);
+                    clearTimeout(maxTimeout);
+                    
+                    // Update document with error
+                    doc.requestResponse = { error: e.message || e.toString() };
                     doc.state = "ERROR";
                     await doc.save();
-                    console.log("submitService error:", e)
+                    console.log("submitService error:", e);
+                    
+                    // Only send error response if connection is still open
+                    if (!res.writableEnded) {
+                        res.write(JSON.stringify({
+                            state: "ERROR",
+                            error: e.message || e.toString(),
+                            authCategory,
+                            paymentHash
+                        }));
+                        res.end();
+                    }
                 }
-
-                await doc.save();
-                res.status(202).send({ state: doc.state });
+                return; // Exit function early since we're handling response manually
             }
         }
     } catch (e) {
