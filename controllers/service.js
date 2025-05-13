@@ -200,133 +200,57 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                 doc.state = "WORKING";
                 await doc.save();
                 
-                // Create a response with HTTP streaming to keep connection alive
-                res.writeHead(202, {
-                    'Content-Type': 'application/json',
-                    'Transfer-Encoding': 'chunked',
-                    'X-Accel-Buffering': 'no' // Disable nginx buffering
+                // Instead of chunked streaming, use standard response with immediate acknowledgment
+                res.status(202).json({
+                    state: "WORKING", 
+                    message: "Transcription job started. Please poll for results.",
+                    paymentHash,
+                    authCategory,
+                    successAction
                 });
                 
-                // Initialize heartbeat counter
-                let heartbeatCount = 0;
-                
-                // Send initial status message
-                res.write(JSON.stringify({
-                    state: "WORKING",
-                    message: "Starting transcription process",
-                    heartbeat: heartbeatCount
-                }));
-                
-                // Set up the heartbeat interval (every 25 seconds to stay within 30s timeout)
-                const heartbeatInterval = setInterval(() => {
-                    heartbeatCount++;
-                    // Only send heartbeat if response is still writable
-                    if (!res.writableEnded) {
-                        res.write(JSON.stringify({
-                            state: "WORKING",
-                            message: "Transcription in progress",
-                            heartbeat: heartbeatCount
-                        }));
-                    }
-                }, 25000); // 25 seconds interval
-                
-                // Maximum timeout (15 minutes)
-                const maxTimeout = setTimeout(() => {
-                    if (!res.writableEnded) {
-                        clearInterval(heartbeatInterval);
-                        const timeoutError = "Transcription timeout after 15 minutes";
-                        console.error(timeoutError);
-                        
-                        // Update database with error
-                        doc.requestResponse = { error: timeoutError };
-                        doc.state = "ERROR";
-                        doc.save().catch(err => console.error("Error saving timeout status:", err));
-                        
-                        // Send final error response and end
-                        res.write(JSON.stringify({
-                            state: "ERROR",
-                            error: timeoutError
-                        }));
-                        res.end();
-                    }
-                }, 15 * 60 * 1000); // 15 minutes
-                
-                try {
-                    const fullPath = path.join(TEMP_DIR, data.filePath);
-                    // Process the transcription
-                    const response = await submitService(service, { ...data, filePath: fullPath });
-                    
-                    // Clean up timers
-                    clearInterval(heartbeatInterval);
-                    clearTimeout(maxTimeout);
-                    
-                    // Update document with results
-                    console.log(`requestResponse:`,response);
-                    doc.requestResponse = response;
-                    doc.state = "DONE";
-                    console.log(`DONE ${service} ${paymentHash} ${response}`);
-                    await doc.save();
-                    console.log("Doc saved!");
-                    
-                    // Only send final response if connection is still open
-                    if (!res.writableEnded) {
-                        res.write(JSON.stringify({
-                            ...response,
-                            state: "DONE",
-                            authCategory, 
-                            paymentHash, 
-                            successAction
-                        }));
-                        res.end();
-                    }
-                } catch (e) {
-                    // Clean up timers on error
-                    clearInterval(heartbeatInterval);
-                    clearTimeout(maxTimeout);
-                    
-                    console.log("submitService error:", e);
-                    
-                    // Safely get error message
-                    let errorMessage = "Unknown error occurred";
+                // Process transcription in the background without keeping the connection open
+                (async () => {
                     try {
-                        errorMessage = e.message || e.toString();
-                    } catch (messageError) {
-                        console.error("Could not extract error message:", messageError);
-                    }
-                    
-                    // Try to update document with error info
-                    try {
-                        doc.requestResponse = { error: errorMessage };
-                        doc.state = "ERROR";
+                        const fullPath = path.join(TEMP_DIR, data.filePath);
+                        console.log(`Starting background transcription for ${paymentHash} at path: ${fullPath}`);
+                        
+                        // Process the transcription
+                        const response = await submitService(service, { ...data, filePath: fullPath });
+                        
+                        // Update document with results
+                        console.log(`Transcription complete for ${paymentHash}`);
+                        console.log(`requestResponse:`, response);
+                        doc.requestResponse = response;
+                        doc.state = "DONE";
+                        console.log(`DONE ${service} ${paymentHash}`);
                         await doc.save();
-                    } catch (saveError) {
-                        console.error("Error saving error state to document:", saveError);
-                    }
-                    
-                    // Only send error response if connection is still open
-                    if (!res.writableEnded) {
+                        console.log("Doc saved!");
+                    } catch (e) {
+                        console.error(`Background transcription error for ${paymentHash}:`, e);
+                        
+                        // Safely get error message
+                        let errorMessage = "Unknown error occurred";
                         try {
-                            res.write(JSON.stringify({
-                                state: "ERROR",
-                                error: errorMessage,
-                                authCategory,
-                                paymentHash
-                            }));
-                            res.end();
-                        } catch (responseError) {
-                            console.error("Error sending error response:", responseError);
-                            // Last resort - try to end the response
-                            try {
-                                if (!res.writableEnded) {
-                                    res.end();
-                                }
-                            } catch (endError) {
-                                console.error("Failed to end response:", endError);
-                            }
+                            errorMessage = e.message || e.toString();
+                        } catch (messageError) {
+                            console.error("Could not extract error message:", messageError);
+                        }
+                        
+                        // Try to update document with error info
+                        try {
+                            doc.requestResponse = { error: errorMessage };
+                            doc.state = "ERROR";
+                            await doc.save();
+                        } catch (saveError) {
+                            console.error("Error saving error state to document:", saveError);
                         }
                     }
-                }
-                return; // Exit function early since we're handling response manually
+                })().catch(err => {
+                    console.error("Unhandled error in background transcription job:", err);
+                });
+                
+                return; // Exit the route handler, background job continues
             }
         }
     } catch (e) {

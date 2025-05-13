@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy your Node.js application files into the container
 COPY . .
 
-# Create temp directory inside /app
-RUN mkdir -p /app/temp
+# Create temp directory inside /app with proper permissions
+RUN mkdir -p /app/temp && chmod 777 /app/temp
 
 # Install python3, pip3, git, ffmpeg, and necessary build tools using Ubuntu's apt package manager
 RUN apt-get update && apt-get install -y \
@@ -23,18 +23,26 @@ RUN apt-get update && apt-get install -y \
 # Install Node.js dependencies
 RUN npm install
 
-# Expose the port on which your Node.js application will listen (e.g., 5001)
+# Expose the port on which your Node.js application will listen
 EXPOSE 5001
 
 # Clean up
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Increase Node.js memory limit for large file processing
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Production environment
+ENV NODE_ENV=production
+
+# Set reasonable timeouts for Node.js HTTP connections
+ENV NODE_SOCKET_TIMEOUT=600000
+ENV NODE_CONNECT_TIMEOUT=60000
+
 # After creating the temp directory
 RUN chmod 777 /app/temp
 
-ENV NODE_ENV=production
-
-# At the end of your Dockerfile
+# Use non-root user for better security
 USER node
 
 # Define the default command to run your Node.js application

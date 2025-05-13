@@ -93,6 +93,13 @@ const startServer = async () => {
       console.log(`Whisper Server running on port ${port}`);
     });
 
+    // Set appropriate timeout values for the server
+    server.timeout = parseInt(process.env.NODE_SOCKET_TIMEOUT || 600000); // 10 minutes default
+    server.keepAliveTimeout = 65000; // Slightly higher than the default ALB/ELB idle timeout of 60 seconds
+    server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout
+
+    console.log(`Server timeouts configured: socket=${server.timeout}ms, keepAlive=${server.keepAliveTimeout}ms`);
+
     ['SIGTERM', 'SIGINT'].forEach(signal => {
       process.on(signal, () => {
         console.log('Shutting down...');
