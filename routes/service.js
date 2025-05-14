@@ -1,5 +1,5 @@
 const express = require('express');
-const { postService, getResult, testLogger } = require('../controllers/service');
+const { postService, getResult, testLogger, getQueueStatus } = require('../controllers/service');
 const auth =  require('../middleware/auth');
 const { upload } = require('../lib/fileManagement')
 
@@ -13,6 +13,10 @@ router
 router
     .route('/:service/:payment_hash/get_result')
     .get(auth, getResult);
+
+router
+    .route('/queue/status')
+    .get(auth, getQueueStatus);
 
 /*router
     .route('/:service/test')

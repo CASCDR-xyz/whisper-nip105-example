@@ -11,10 +11,13 @@ const {
     downloadRemoteFile,
     validateAudioSize,
     getAudioDuration,
-    convertToMp3
+    convertToMp3,
+    getRemoteFileSize,
+    FILE_SIZE_LIMIT_MB
 } = require('../lib/fileManagement');
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
+const jobManager = require('../lib/jobManager');
 
 const ALLOWED_AUDIO_FORMATS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a'];
 const ALLOWED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.wmv', '.flv', '.webm'];
@@ -28,24 +31,6 @@ exports.postService = asyncHandler(async (req, res, next) => {
     const authAllowed = req.body?.authAllowed;
     console.log(`postService req.body:`, JSON.stringify(req.body, null, 2));
     const service = req.params.service;
-    const heartbeatDisabled = req.body?.heartbeatDisabled || false;
-
-    let heartbeatInterval = null;
-    let heartbeatCount = 0;
-    const maxHeartbeatCount = 5;
-    if(!heartbeatDisabled) {
-        // Start a periodic heartbeat to keep the connection alive
-        heartbeatInterval = setInterval(() => {
-            res.flushHeaders(); // Flush headers periodically
-            console.log('Flushed headers to keep the connection alive.');
-
-            heartbeatCount++;
-            if (heartbeatCount >= maxHeartbeatCount) {
-                console.log('Heartbeat limit reached. Clearing interval.');
-                clearInterval(heartbeatInterval);
-            }
-        }, 20000); // Every 20 seconds
-    }
 
     if (authAllowed) {
         const fakePaymentHash = crypto.randomBytes(20).toString('hex');
@@ -67,6 +52,15 @@ exports.postService = asyncHandler(async (req, res, next) => {
                     return res.status(400).send('Invalid file format. Supported formats: ' + 
                         ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
                 }
+                
+                const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+                if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                    const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                    console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                    console.error(`❌ Remote URL: ${remoteUrl}`);
+                    return res.status(400).send(errorMessage);
+                }
+                
                 const downloadedFilePath = await downloadRemoteFile(remoteUrl);
                 let audioFilePath = downloadedFilePath;
                 const fileExtension = path.extname(downloadedFilePath).toLowerCase();
@@ -79,9 +73,11 @@ exports.postService = asyncHandler(async (req, res, next) => {
                     await convertToMp3(downloadedFilePath, audioFilePath);
                 }
 
-                if (!validateAudioSize(audioFilePath)) {
-                    return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
+                const isValidSize = await validateAudioSize(audioFilePath);
+                if (!isValidSize) {
+                    return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
                 }
+
                 const durationInSeconds = await getAudioDuration(audioFilePath);
                 const invoice = await generateInvoice(service, durationInSeconds);
                 doc.requestData["remote_url"] = remoteUrl;
@@ -94,10 +90,6 @@ exports.postService = asyncHandler(async (req, res, next) => {
             url: `${process.env.ENDPOINT}/${service}/${fakePaymentHash}/get_result`,
             description: "Open to get the confirmation code for your purchase."
         };
-        // Clear the heartbeat when the process is complete
-        if(heartbeatInterval !== null) {
-            clearInterval(heartbeatInterval);
-        }
         res.status(200).send({paymentHash: fakePaymentHash, authCategory: req.body.authCategory, successAction});
         return;
     }
@@ -111,30 +103,26 @@ exports.postService = asyncHandler(async (req, res, next) => {
             const urlObj = new URL(remoteUrl);
             
             if (!isAllowedFormat(urlObj.pathname)) {
-                // Clear the heartbeat on error
-                if(heartbeatInterval !== null) {
-                    clearInterval(heartbeatInterval);
-                }
                 return res.status(400).send('Invalid file format. Supported formats: ' + 
                     ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
+            }
+
+            const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+            if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                console.error(`❌ Remote URL: ${remoteUrl}`);
+                return res.status(400).send(errorMessage);
             }
 
             originalFilePath = await downloadRemoteFile(remoteUrl);
         } else if (req.file) {
             if (!isAllowedFormat(req.file.originalname)) {
-                // Clear the heartbeat on error
-                if(heartbeatInterval !== null) {
-                    clearInterval(heartbeatInterval);
-                }
                 return res.status(400).send('Invalid file format. Supported formats: ' + 
                     ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
             }
             originalFilePath = req.file.path;
         } else {
-            // Clear the heartbeat on error
-            if(heartbeatInterval !== null) {
-                clearInterval(heartbeatInterval);
-            }
             return res.status(400).send('No file uploaded or remote URL provided.');
         }
 
@@ -150,12 +138,9 @@ exports.postService = asyncHandler(async (req, res, next) => {
             audioFilePath = originalFilePath;
         }
 
-        if (!validateAudioSize(audioFilePath)) {
-            // Clear the heartbeat on error
-            if(heartbeatInterval !== null) {
-                clearInterval(heartbeatInterval);
-            }
-            return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
+        const isValidSize = await validateAudioSize(audioFilePath);
+        if (!isValidSize) {
+            return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
         }
 
         const durationInSeconds = await getAudioDuration(audioFilePath);
@@ -177,18 +162,10 @@ exports.postService = asyncHandler(async (req, res, next) => {
         await doc.save();
 
         logState(service, invoice.paymentHash, "REQUESTED");
-        // Clear the heartbeat when finished
-        if(heartbeatInterval !== null) {
-            clearInterval(heartbeatInterval);
-        }
         res.status(402).send({...invoice, authCategory: req.body.authCategory, successAction});
 
     } catch (e) {
         console.log(e.toString().substring(0, 150));
-        // Clear the heartbeat on error
-        if(heartbeatInterval !== null) {
-            clearInterval(heartbeatInterval);
-        }
         res.status(500).send(e);
     }
 });
@@ -212,7 +189,6 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
         const authAllowed = req.body.authAllowed;
         const authCategory = req.body.authCategory;
         const shouldSkipPaidVerify = authCategory === 1;
-        const heartbeatDisabled = req.body?.heartbeatDisabled || false;
         const { invoice, isPaid } = await getIsInvoicePaid(paymentHash, shouldSkipPaidVerify);
         const successAction =  {
             tag: "url",
@@ -220,29 +196,8 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
             description: "Open to get the confirmation code for your purchase."
         };
 
-        let heartbeatInterval = null;
-        let heartbeatCount = 0;
-        const maxHeartbeatCount = 5;
-        if(!heartbeatDisabled) {
-            // Start a periodic heartbeat to keep the connection alive
-            heartbeatInterval = setInterval(() => {
-                res.flushHeaders(); // Flush headers periodically
-                console.log('Flushed headers to keep the connection alive.');
-
-                heartbeatCount++;
-                if (heartbeatCount >= maxHeartbeatCount) {
-                    console.log('Heartbeat limit reached. Clearing interval.');
-                    clearInterval(heartbeatInterval);
-                }
-            }, 20000); // Every 20 seconds
-        }
-
         logState(service, paymentHash, "POLL");
         if (!authAllowed && !isPaid) {
-            // Clear the heartbeat if unpaid
-            if(heartbeatInterval !== null) {
-                clearInterval(heartbeatInterval);
-            }
             res.status(402).send({ ...invoice, isPaid, authCategory, successAction});
         } 
         else {
@@ -252,63 +207,93 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
 
             switch (doc.state) {
             case "WORKING":
-                logState(service, paymentHash, "WORKING");
-                // Clear the heartbeat if still working
-                if(heartbeatInterval !== null) {
-                    clearInterval(heartbeatInterval);
+                // Check if job is in the queue
+                const jobStatusInfo = jobManager.getJobInfo(paymentHash);
+                if (jobStatusInfo) {
+                    // If the job is in the queue, include queue information
+                    const queueInfo = {
+                        status: jobStatusInfo.status,
+                        queuePosition: jobStatusInfo.queuePosition,
+                        message: jobStatusInfo.status === 'QUEUED' 
+                            ? `Your job is queued at position ${jobStatusInfo.queuePosition}` 
+                            : 'Your job is currently being processed'
+                    };
+                    logState(service, paymentHash, "WORKING");
+                    res.status(202).send({
+                        state: doc.state, 
+                        authCategory, 
+                        paymentHash, 
+                        queueInfo,
+                        successAction
+                    });
+                } else {
+                    // If not in queue but marked as WORKING, just return normal response
+                    logState(service, paymentHash, "WORKING");
+                    res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
                 }
-                res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
                 break;
             case "ERROR":
             case "DONE":
+                // Remove job from queue if it exists
+                jobManager.removeJob(paymentHash);
+                
                 logState(service, paymentHash, doc.state);
-                // Clear the heartbeat when done
-                if(heartbeatInterval !== null) {
-                    clearInterval(heartbeatInterval);
+                
+                // Debug log to check the response being sent
+                console.log(`DEBUG - Response content for job ${paymentHash}:`);
+                if (doc.requestResponse) {
+                    console.log(`Response has ${typeof doc.requestResponse === 'object' ? Object.keys(doc.requestResponse).length : 0} keys`);
+                    
+                    // Look for transcript content in different possible locations
+                    let hasTranscript = false;
+                    
+                    if (doc.requestResponse.channels) {
+                        hasTranscript = true;
+                        console.log(`Found transcript directly in requestResponse`);
+                        console.log(`Transcript preview: ${doc.requestResponse.channels[0]?.alternatives[0]?.transcript?.substring(0, 200) || 'No text found'}...`);
+                    }
+                    
+                    if (!hasTranscript) {
+                        console.log(`WARNING: No transcript found in response. Response type: ${typeof doc.requestResponse}`);
+                        console.log(`Response keys: ${Object.keys(doc.requestResponse).join(', ')}`);
+                    }
+                } else {
+                    console.log(`WARNING: No requestResponse found for job ${paymentHash}`);
                 }
+                
                 res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                 break;
             default:
                 logState(service, paymentHash, "PAID");
                 const data = doc.requestData;
-                // Use async/await to ensure sequential execution
-                try {
-                    const fullPath = path.join(TEMP_DIR, data.filePath);
-                    const response = await submitService(service, { ...data, filePath: fullPath });
-                    console.log(`requestResponse:`,response);
-                    doc.requestResponse = response;
-                    doc.state = "DONE";
-                    console.log(`DONE ${service} ${paymentHash} ${response}`);
-                    await doc.save();
-                    console.log("Doc saved!")
-                    // Clear the heartbeat when complete
-                    if(heartbeatInterval !== null) {
-                        clearInterval(heartbeatInterval);
-                    }
-                    res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
-                    return;
-                } catch (e) {
-                    doc.requestResponse = e;
-                    doc.state = "ERROR";
-                    await doc.save();
-                    console.log("submitService error:", e);
-                }
-
+                
+                // Add job to queue
+                doc.state = "WORKING";
                 await doc.save();
-                // Clear the heartbeat when complete
-                if(heartbeatInterval !== null) {
-                    clearInterval(heartbeatInterval);
-                }
-                res.status(202).send({ state: doc.state });
+                
+                // Adding to job manager queue
+                const queuedJobInfo = jobManager.addJob(paymentHash, service);
+                console.log(`Added job ${paymentHash} to queue, position: ${queuedJobInfo.queuePosition}`);
+                
+                // Return queue information
+                const queueInfo = {
+                    status: queuedJobInfo.status,
+                    queuePosition: queuedJobInfo.queuePosition,
+                    message: `Your job has been queued at position ${queuedJobInfo.queuePosition}`
+                };
+                
+                res.status(202).send({ 
+                    state: "WORKING", 
+                    queueInfo, 
+                    authCategory,
+                    paymentHash,
+                    successAction 
+                });
             }
         }
     } catch (e) {
-    console.log(e.toString().substring(0, 300));
-    // Clear the heartbeat on error
-    if(heartbeatInterval !== null) {
-        clearInterval(heartbeatInterval);
-    }
-    res.status(500).send(e);
+        console.log(e.toString().substring(0, 300));
+        res.status(500).send(e);
     }
 });
 
@@ -319,4 +304,21 @@ exports.testLogger = asyncHandler(async (req, res, next) => {
         console.log('Uploaded File Path:', req?.file?.path);
     }
     res.status(200).send({'test': 'test'});
+});
+
+exports.getQueueStatus = asyncHandler(async (req, res, next) => {
+    try {
+        // Get queue information
+        const queueSize = jobManager.getQueueSize();
+        const processingCount = jobManager.getProcessingCount();
+        
+        res.status(200).json({
+            queueSize,
+            processingCount,
+            status: 'healthy'
+        });
+    } catch (e) {
+        console.error('Error getting queue status:', e);
+        res.status(500).send(e);
+    }
 });
