@@ -55,7 +55,10 @@ exports.postService = asyncHandler(async (req, res, next) => {
                 
                 const fileSizeInfo = await getRemoteFileSize(remoteUrl);
                 if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
-                    return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`);
+                    const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                    console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                    console.error(`❌ Remote URL: ${remoteUrl}`);
+                    return res.status(400).send(errorMessage);
                 }
                 
                 const downloadedFilePath = await downloadRemoteFile(remoteUrl);
@@ -106,7 +109,10 @@ exports.postService = asyncHandler(async (req, res, next) => {
 
             const fileSizeInfo = await getRemoteFileSize(remoteUrl);
             if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
-                return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`);
+                const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                console.error(`❌ Remote URL: ${remoteUrl}`);
+                return res.status(400).send(errorMessage);
             }
 
             originalFilePath = await downloadRemoteFile(remoteUrl);
@@ -232,6 +238,29 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
                 jobManager.removeJob(paymentHash);
                 
                 logState(service, paymentHash, doc.state);
+                
+                // Debug log to check the response being sent
+                console.log(`DEBUG - Response content for job ${paymentHash}:`);
+                if (doc.requestResponse) {
+                    console.log(`Response has ${typeof doc.requestResponse === 'object' ? Object.keys(doc.requestResponse).length : 0} keys`);
+                    
+                    // Look for transcript content in different possible locations
+                    let hasTranscript = false;
+                    
+                    if (doc.requestResponse.channels) {
+                        hasTranscript = true;
+                        console.log(`Found transcript directly in requestResponse`);
+                        console.log(`Transcript preview: ${doc.requestResponse.channels[0]?.alternatives[0]?.transcript?.substring(0, 200) || 'No text found'}...`);
+                    }
+                    
+                    if (!hasTranscript) {
+                        console.log(`WARNING: No transcript found in response. Response type: ${typeof doc.requestResponse}`);
+                        console.log(`Response keys: ${Object.keys(doc.requestResponse).join(', ')}`);
+                    }
+                } else {
+                    console.log(`WARNING: No requestResponse found for job ${paymentHash}`);
+                }
+                
                 res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                 break;
             default:
