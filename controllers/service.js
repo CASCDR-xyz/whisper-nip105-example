@@ -11,7 +11,9 @@ const {
     downloadRemoteFile,
     validateAudioSize,
     getAudioDuration,
-    convertToMp3
+    convertToMp3,
+    getRemoteFileSize,
+    FILE_SIZE_LIMIT_MB
 } = require('../lib/fileManagement');
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
@@ -49,6 +51,12 @@ exports.postService = asyncHandler(async (req, res, next) => {
                     return res.status(400).send('Invalid file format. Supported formats: ' + 
                         ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
                 }
+                
+                const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+                if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                    return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`);
+                }
+                
                 const downloadedFilePath = await downloadRemoteFile(remoteUrl);
                 let audioFilePath = downloadedFilePath;
                 const fileExtension = path.extname(downloadedFilePath).toLowerCase();
@@ -61,9 +69,11 @@ exports.postService = asyncHandler(async (req, res, next) => {
                     await convertToMp3(downloadedFilePath, audioFilePath);
                 }
 
-                if (!validateAudioSize(audioFilePath)) {
-                    return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
+                const isValidSize = await validateAudioSize(audioFilePath);
+                if (!isValidSize) {
+                    return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
                 }
+
                 const durationInSeconds = await getAudioDuration(audioFilePath);
                 const invoice = await generateInvoice(service, durationInSeconds);
                 doc.requestData["remote_url"] = remoteUrl;
@@ -93,6 +103,11 @@ exports.postService = asyncHandler(async (req, res, next) => {
                     ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
             }
 
+            const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+            if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`);
+            }
+
             originalFilePath = await downloadRemoteFile(remoteUrl);
         } else if (req.file) {
             if (!isAllowedFormat(req.file.originalname)) {
@@ -116,8 +131,9 @@ exports.postService = asyncHandler(async (req, res, next) => {
             audioFilePath = originalFilePath;
         }
 
-        if (!validateAudioSize(audioFilePath)) {
-            return res.status(400).send("File is too large to transcribe. The limit is 25MB.");
+        const isValidSize = await validateAudioSize(audioFilePath);
+        if (!isValidSize) {
+            return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
         }
 
         const durationInSeconds = await getAudioDuration(audioFilePath);
