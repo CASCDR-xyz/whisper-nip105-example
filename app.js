@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const logger = require('./middleware/logger');
 const serviceRoutes = require('./routes/service');
 const { postOfferings, houseKeeping } = require('./lib/postOfferings');
+const jobManager = require('./lib/jobManager');
 
 require("dotenv").config();
 global.WebSocket = WebSocket;

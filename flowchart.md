@@ -24,13 +24,24 @@ flowchart TD
         L --> M{Check Payment}
         M -->|Not Paid| N[Return Invoice]
         M -->|Paid| O{Check State}
-        O -->|WORKING| P[Return Working Status]
+        O -->|WORKING| P[Return Working Status with Queue Info]
         O -->|ERROR/DONE| Q[Return Results]
-        O -->|Default| R[Process Job]
-        R --> S[Submit Service]
-        S -->|Success| T[Mark as DONE]
-        S -->|Error| U[Mark as ERROR]
-        T --> Q
-        U --> Q
+        O -->|Default| R[Add to Queue]
+        R --> S[Set State to WORKING]
+        S --> T[Return Queue Position]
+        
+        subgraph "Job Queue Processing"
+            U[JobManager] --> V{Queue Empty?}
+            V -->|No| W[Process Next Job]
+            W --> X[Update DB Status]
+            X --> Y{Job Successful?}
+            Y -->|Yes| Z[Mark as DONE]
+            Y -->|No| AA{Max Retries?}
+            AA -->|Yes| AB[Mark as ERROR]
+            AA -->|No| AC[Requeue Job]
+            Z --> U
+            AB --> U
+            AC --> U
+        end
     end
 ``` 

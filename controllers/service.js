@@ -17,6 +17,7 @@ const {
 } = require('../lib/fileManagement');
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
+const jobManager = require('../lib/jobManager');
 
 const ALLOWED_AUDIO_FORMATS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a'];
 const ALLOWED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.wmv', '.flv', '.webm'];
@@ -200,43 +201,70 @@ exports.getResult = asyncHandler(async (req,res,next) =>{
 
             switch (doc.state) {
             case "WORKING":
-                logState(service, paymentHash, "WORKING");
-                res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
+                // Check if job is in the queue
+                const jobStatusInfo = jobManager.getJobInfo(paymentHash);
+                if (jobStatusInfo) {
+                    // If the job is in the queue, include queue information
+                    const queueInfo = {
+                        status: jobStatusInfo.status,
+                        queuePosition: jobStatusInfo.queuePosition,
+                        message: jobStatusInfo.status === 'QUEUED' 
+                            ? `Your job is queued at position ${jobStatusInfo.queuePosition}` 
+                            : 'Your job is currently being processed'
+                    };
+                    logState(service, paymentHash, "WORKING");
+                    res.status(202).send({
+                        state: doc.state, 
+                        authCategory, 
+                        paymentHash, 
+                        queueInfo,
+                        successAction
+                    });
+                } else {
+                    // If not in queue but marked as WORKING, just return normal response
+                    logState(service, paymentHash, "WORKING");
+                    res.status(202).send({state: doc.state, authCategory, paymentHash, successAction});
+                }
                 break;
             case "ERROR":
             case "DONE":
+                // Remove job from queue if it exists
+                jobManager.removeJob(paymentHash);
+                
                 logState(service, paymentHash, doc.state);
                 res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
                 break;
             default:
                 logState(service, paymentHash, "PAID");
                 const data = doc.requestData;
-                // Use async/await to ensure sequential execution
-                try {
-                    const fullPath = path.join(TEMP_DIR, data.filePath);
-                    const response = await submitService(service, { ...data, filePath: fullPath });
-                    console.log(`requestResponse:`,response);
-                    doc.requestResponse = response;
-                    doc.state = "DONE";
-                    console.log(`DONE ${service} ${paymentHash} ${response}`);
-                    await doc.save();
-                    console.log("Doc saved!")
-                    res.status(200).send({...doc.requestResponse, authCategory, paymentHash, successAction});
-                    return;
-                } catch (e) {
-                    doc.requestResponse = e;
-                    doc.state = "ERROR";
-                    await doc.save();
-                    console.log("submitService error:", e)
-                }
-
+                
+                // Add job to queue
+                doc.state = "WORKING";
                 await doc.save();
-                res.status(202).send({ state: doc.state });
+                
+                // Adding to job manager queue
+                const queuedJobInfo = jobManager.addJob(paymentHash, service);
+                console.log(`Added job ${paymentHash} to queue, position: ${queuedJobInfo.queuePosition}`);
+                
+                // Return queue information
+                const queueInfo = {
+                    status: queuedJobInfo.status,
+                    queuePosition: queuedJobInfo.queuePosition,
+                    message: `Your job has been queued at position ${queuedJobInfo.queuePosition}`
+                };
+                
+                res.status(202).send({ 
+                    state: "WORKING", 
+                    queueInfo, 
+                    authCategory,
+                    paymentHash,
+                    successAction 
+                });
             }
         }
     } catch (e) {
-    console.log(e.toString().substring(0, 300));
-    res.status(500).send(e);
+        console.log(e.toString().substring(0, 300));
+        res.status(500).send(e);
     }
 });
 
@@ -247,4 +275,21 @@ exports.testLogger = asyncHandler(async (req, res, next) => {
         console.log('Uploaded File Path:', req?.file?.path);
     }
     res.status(200).send({'test': 'test'});
+});
+
+exports.getQueueStatus = asyncHandler(async (req, res, next) => {
+    try {
+        // Get queue information
+        const queueSize = jobManager.getQueueSize();
+        const processingCount = jobManager.getProcessingCount();
+        
+        res.status(200).json({
+            queueSize,
+            processingCount,
+            status: 'healthy'
+        });
+    } catch (e) {
+        console.error('Error getting queue status:', e);
+        res.status(500).send(e);
+    }
 });
