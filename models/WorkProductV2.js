@@ -34,5 +34,9 @@ const WorkProductV2Schema = new mongoose.Schema({
   },
 });
 
+// Add indexes for performance
+WorkProductV2Schema.index({ lookupHash: 1 });
+WorkProductV2Schema.index({ paymentHash: 1 });
+
 WorkProductV2 = mongoose.model('WorkProductV2', WorkProductV2Schema);
 module.exports = WorkProductV2;

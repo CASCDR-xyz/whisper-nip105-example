@@ -12,7 +12,7 @@ global.WebSocket = WebSocket;
 
 const app = express();
 
-const allowedOrigins = ['http://localhost:3000', 'https://cascdr.xyz'];
+const allowedOrigins = ['http://localhost:3000', 'https://cascdr.xyz', 'https://whispr-v3-w-caching-ex8zk.ondigitalocean.app', 'https://www.pullthatupjamie.ai'];
 
 // CORS setup first
 app.use((req, res, next) => {

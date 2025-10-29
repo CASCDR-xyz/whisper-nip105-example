@@ -4,6 +4,7 @@ const { getServicePrice, submitService } = require('../lib/service');
 const { createNewJobDocument, findJobRequestByPaymentHash, getIsInvoicePaid, generateInvoice } = require('../lib/nip105');
 const { logState, sleep } = require('../lib/common');
 const musicMetadata = require('music-metadata');
+const JobRequest = require('../models/jobRequest');
 const {
     upload,
     extractAudioFromMp4,
@@ -304,6 +305,132 @@ exports.testLogger = asyncHandler(async (req, res, next) => {
         console.log('Uploaded File Path:', req?.file?.path);
     }
     res.status(200).send({'test': 'test'});
+});
+
+exports.getResultByGuid = asyncHandler(async (req, res, next) => {
+    try {
+        const service = req.params.service;
+        const guid = req.params.guid;
+        const authAllowed = req.body.authAllowed;
+        const authCategory = req.body.authCategory;
+        
+        // Find job by guid instead of paymentHash
+        const doc = await JobRequest.findOne({ 
+            'requestData.guid': guid,
+            service: service 
+        }).exec();
+        
+        if (!doc) {
+            return res.status(404).send('No job found for this GUID');
+        }
+        
+        const shouldSkipPaidVerify = authCategory === 1;
+        const { invoice, isPaid } = await getIsInvoicePaid(doc.paymentHash, shouldSkipPaidVerify);
+        const successAction = {
+            tag: "url",
+            url: `${process.env.ENDPOINT}/${service}/${guid}/get_result_by_guid`,
+            description: "Open to get the confirmation code for your purchase."
+        };
+
+        logState(service, doc.paymentHash, "POLL");
+        if (!authAllowed && !isPaid) {
+            res.status(402).send({ ...invoice, isPaid, authCategory, successAction});
+        } 
+        else {
+            console.log(`requestData: ${JSON.stringify(doc.requestData, null, 2)}`);
+
+            switch (doc.state) {
+            case "WORKING":
+                // Check if job is in the queue
+                const jobStatusInfo = jobManager.getJobInfo(doc.paymentHash);
+                if (jobStatusInfo) {
+                    // If the job is in the queue, include queue information
+                    const queueInfo = {
+                        status: jobStatusInfo.status,
+                        queuePosition: jobStatusInfo.queuePosition,
+                        message: jobStatusInfo.status === 'QUEUED' 
+                            ? `Your job is queued at position ${jobStatusInfo.queuePosition}` 
+                            : 'Your job is currently being processed'
+                    };
+                    logState(service, doc.paymentHash, "WORKING");
+                    res.status(202).send({
+                        state: doc.state, 
+                        authCategory, 
+                        paymentHash: doc.paymentHash,
+                        guid: guid,
+                        queueInfo,
+                        successAction
+                    });
+                } else {
+                    // If not in queue but marked as WORKING, just return normal response
+                    logState(service, doc.paymentHash, "WORKING");
+                    res.status(202).send({state: doc.state, authCategory, paymentHash: doc.paymentHash, guid: guid, successAction});
+                }
+                break;
+            case "ERROR":
+            case "DONE":
+                // Remove job from queue if it exists
+                jobManager.removeJob(doc.paymentHash);
+                
+                logState(service, doc.paymentHash, doc.state);
+                
+                // Debug log to check the response being sent
+                console.log(`DEBUG - Response content for job ${doc.paymentHash} (GUID: ${guid}):`);
+                if (doc.requestResponse) {
+                    console.log(`Response has ${typeof doc.requestResponse === 'object' ? Object.keys(doc.requestResponse).length : 0} keys`);
+                    
+                    // Look for transcript content in different possible locations
+                    let hasTranscript = false;
+                    
+                    if (doc.requestResponse.channels) {
+                        hasTranscript = true;
+                        console.log(`Found transcript directly in requestResponse`);
+                        console.log(`Transcript preview: ${doc.requestResponse.channels[0]?.alternatives[0]?.transcript?.substring(0, 200) || 'No text found'}...`);
+                    }
+                    
+                    if (!hasTranscript) {
+                        console.log(`WARNING: No transcript found in response. Response type: ${typeof doc.requestResponse}`);
+                        console.log(`Response keys: ${Object.keys(doc.requestResponse).join(', ')}`);
+                    }
+                } else {
+                    console.log(`WARNING: No requestResponse found for job ${doc.paymentHash} (GUID: ${guid})`);
+                }
+                
+                res.status(200).send({...doc.requestResponse, authCategory, paymentHash: doc.paymentHash, guid: guid, successAction});
+                break;
+            default:
+                logState(service, doc.paymentHash, "PAID");
+                const data = doc.requestData;
+                
+                // Add job to queue
+                doc.state = "WORKING";
+                await doc.save();
+                
+                // Adding to job manager queue
+                const queuedJobInfo = jobManager.addJob(doc.paymentHash, service);
+                console.log(`Added job ${doc.paymentHash} (GUID: ${guid}) to queue, position: ${queuedJobInfo.queuePosition}`);
+                
+                // Return queue information
+                const queueInfo = {
+                    status: queuedJobInfo.status,
+                    queuePosition: queuedJobInfo.queuePosition,
+                    message: `Your job has been queued at position ${queuedJobInfo.queuePosition}`
+                };
+                
+                res.status(202).send({ 
+                    state: "WORKING", 
+                    queueInfo, 
+                    authCategory,
+                    paymentHash: doc.paymentHash,
+                    guid: guid,
+                    successAction 
+                });
+            }
+        }
+    } catch (e) {
+        console.log(e.toString().substring(0, 300));
+        res.status(500).send(e);
+    }
 });
 
 exports.getQueueStatus = asyncHandler(async (req, res, next) => {
