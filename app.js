@@ -65,7 +65,14 @@ app.use((err, req, res, next) => {
 
 // Routes
 app.use('/', serviceRoutes);
-app.use('/test', testRoutes);
+
+// Test routes (only in DEBUG mode)
+if (process.env.DEBUG === 'true') {
+  console.log('🧪 DEBUG mode enabled - mounting test routes at /test');
+  app.use('/test', testRoutes);
+} else {
+  console.log('Production mode - test routes disabled');
+}
 
 // Periodic tasks
 async function run_periodic_tasks() {
