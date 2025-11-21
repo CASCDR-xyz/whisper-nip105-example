@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { getServicePrice, submitService } = require('../lib/service');
 const { createNewJobDocument, findJobRequestByPaymentHash, getIsInvoicePaid, generateInvoice } = require('../lib/nip105');
 const { logState, sleep } = require('../lib/common');
+const { deleteFile } = require('../lib/fileManagement');
 const musicMetadata = require('music-metadata');
 const JobRequest = require('../models/jobRequest');
 const {
@@ -14,7 +15,9 @@ const {
     getAudioDuration,
     convertToMp3,
     getRemoteFileSize,
-    FILE_SIZE_LIMIT_MB
+    FILE_SIZE_LIMIT_MB,
+    downloadM3u8Stream,
+    isM3u8Url
 } = require('../lib/fileManagement');
 const path = require('path');
 const { TEMP_DIR } = require('../lib/fileManagement');
@@ -22,10 +25,13 @@ const jobManager = require('../lib/jobManager');
 
 const ALLOWED_AUDIO_FORMATS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a'];
 const ALLOWED_VIDEO_FORMATS = ['.mp4', '.mov', '.avi', '.wmv', '.flv', '.webm'];
+const ALLOWED_STREAM_FORMATS = ['.m3u8'];
 
 function isAllowedFormat(filename) {
     const ext = path.extname(filename).toLowerCase();
-    return ALLOWED_AUDIO_FORMATS.includes(ext) || ALLOWED_VIDEO_FORMATS.includes(ext);
+    return ALLOWED_AUDIO_FORMATS.includes(ext) || 
+           ALLOWED_VIDEO_FORMATS.includes(ext) ||
+           ALLOWED_STREAM_FORMATS.includes(ext);
 }
 
 exports.postService = asyncHandler(async (req, res, next) => {
@@ -48,41 +54,59 @@ exports.postService = asyncHandler(async (req, res, next) => {
         } else {
             const remoteUrl = req.body?.remote_url;
             if (remoteUrl) {
-                const urlObj = new URL(remoteUrl);
-                if (!isAllowedFormat(urlObj.pathname)) {
-                    return res.status(400).send('Invalid file format. Supported formats: ' + 
-                        ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
-                }
-                
-                const fileSizeInfo = await getRemoteFileSize(remoteUrl);
-                if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
-                    const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
-                    console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
-                    console.error(`❌ Remote URL: ${remoteUrl}`);
-                    return res.status(400).send(errorMessage);
-                }
-                
-                const downloadedFilePath = await downloadRemoteFile(remoteUrl);
-                let audioFilePath = downloadedFilePath;
-                const fileExtension = path.extname(downloadedFilePath).toLowerCase();
+                // Check if it's an m3u8 stream
+                if (isM3u8Url(remoteUrl)) {
+                    console.log('📺 Detected m3u8 HLS stream');
+                    // M3U8 streams don't need format validation - we extract audio
+                    // Download m3u8 stream (automatically extracts audio-only, lowest quality)
+                    const audioFilePath = await downloadM3u8Stream(remoteUrl);
+                    
+                    const isValidSize = await validateAudioSize(audioFilePath);
+                    if (!isValidSize) {
+                        await deleteFile(audioFilePath);
+                        return res.status(400).send(`Extracted audio is too large. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
+                    }
+                    
+                    // No invoice needed - user is already authenticated
+                    doc.requestData["remote_url"] = remoteUrl;
+                    doc.requestData["filePath"] = path.basename(audioFilePath);
+                } else {
+                    // Regular file URL handling
+                    const urlObj = new URL(remoteUrl);
+                    if (!isAllowedFormat(urlObj.pathname)) {
+                        return res.status(400).send('Invalid file format. Supported formats: ' + 
+                            ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS, ALLOWED_STREAM_FORMATS).join(', '));
+                    }
+                    
+                    const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+                    if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                        const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                        console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                        console.error(`❌ Remote URL: ${remoteUrl}`);
+                        return res.status(400).send(errorMessage);
+                    }
+                    
+                    const downloadedFilePath = await downloadRemoteFile(remoteUrl);
+                    let audioFilePath = downloadedFilePath;
+                    const fileExtension = path.extname(downloadedFilePath).toLowerCase();
 
-                if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
-                    audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
-                    await extractAudioFromVideo(downloadedFilePath, audioFilePath);
-                } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
-                    audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
-                    await convertToMp3(downloadedFilePath, audioFilePath);
-                }
+                    if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
+                        audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
+                        await extractAudioFromVideo(downloadedFilePath, audioFilePath);
+                    } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
+                        audioFilePath = downloadedFilePath.replace(fileExtension, '.mp3');
+                        await convertToMp3(downloadedFilePath, audioFilePath);
+                    }
 
                 const isValidSize = await validateAudioSize(audioFilePath);
                 if (!isValidSize) {
                     return res.status(400).send(`File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB.`);
                 }
 
-                const durationInSeconds = await getAudioDuration(audioFilePath);
-                const invoice = await generateInvoice(service, durationInSeconds);
-                doc.requestData["remote_url"] = remoteUrl;
-                doc.requestData["filePath"] = path.basename(audioFilePath);
+                    // No invoice needed - user is already authenticated
+                    doc.requestData["remote_url"] = remoteUrl;
+                    doc.requestData["filePath"] = path.basename(audioFilePath);
+                }
             }
             await doc.save();
         }
@@ -101,42 +125,56 @@ exports.postService = asyncHandler(async (req, res, next) => {
 
         if (req.body.remote_url) {
             const remoteUrl = req.body.remote_url;
-            const urlObj = new URL(remoteUrl);
             
-            if (!isAllowedFormat(urlObj.pathname)) {
-                return res.status(400).send('Invalid file format. Supported formats: ' + 
-                    ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
-            }
+            // Check if it's an m3u8 stream
+            if (isM3u8Url(remoteUrl)) {
+                console.log('📺 Detected m3u8 HLS stream');
+                // M3U8 streams are handled specially - extract audio directly
+                originalFilePath = await downloadM3u8Stream(remoteUrl);
+                // Set audioFilePath directly since m3u8 extraction outputs mp3
+                audioFilePath = originalFilePath;
+            } else {
+                // Regular file URL handling
+                const urlObj = new URL(remoteUrl);
+                
+                if (!isAllowedFormat(urlObj.pathname)) {
+                    return res.status(400).send('Invalid file format. Supported formats: ' + 
+                        ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS, ALLOWED_STREAM_FORMATS).join(', '));
+                }
 
-            const fileSizeInfo = await getRemoteFileSize(remoteUrl);
-            if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
-                const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
-                console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
-                console.error(`❌ Remote URL: ${remoteUrl}`);
-                return res.status(400).send(errorMessage);
-            }
+                const fileSizeInfo = await getRemoteFileSize(remoteUrl);
+                if (fileSizeInfo && fileSizeInfo.mb > FILE_SIZE_LIMIT_MB) {
+                    const errorMessage = `File is too large to transcribe. The limit is ${FILE_SIZE_LIMIT_MB}MB, but the file is ${fileSizeInfo.mb.toFixed(2)}MB.`;
+                    console.error(`❌ CONTROLLER ERROR: ${errorMessage}`);
+                    console.error(`❌ Remote URL: ${remoteUrl}`);
+                    return res.status(400).send(errorMessage);
+                }
 
-            originalFilePath = await downloadRemoteFile(remoteUrl);
+                originalFilePath = await downloadRemoteFile(remoteUrl);
+            }
         } else if (req.file) {
             if (!isAllowedFormat(req.file.originalname)) {
                 return res.status(400).send('Invalid file format. Supported formats: ' + 
-                    ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS).join(', '));
+                    ALLOWED_AUDIO_FORMATS.concat(ALLOWED_VIDEO_FORMATS, ALLOWED_STREAM_FORMATS).join(', '));
             }
             originalFilePath = req.file.path;
         } else {
             return res.status(400).send('No file uploaded or remote URL provided.');
         }
 
-        const fileExtension = path.extname(originalFilePath).toLowerCase();
+        // Only process video/audio conversion if it's not already an mp3 from m3u8 extraction
+        if (!audioFilePath) {
+            const fileExtension = path.extname(originalFilePath).toLowerCase();
 
-        if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
-            audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
-            await extractAudioFromVideo(originalFilePath, audioFilePath);
-        } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
-            audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
-            await convertToMp3(originalFilePath, audioFilePath);
-        } else {
-            audioFilePath = originalFilePath;
+            if (ALLOWED_VIDEO_FORMATS.includes(fileExtension)) {
+                audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
+                await extractAudioFromVideo(originalFilePath, audioFilePath);
+            } else if (ALLOWED_AUDIO_FORMATS.includes(fileExtension) && fileExtension !== '.mp3') {
+                audioFilePath = originalFilePath.replace(fileExtension, '.mp3');
+                await convertToMp3(originalFilePath, audioFilePath);
+            } else {
+                audioFilePath = originalFilePath;
+            }
         }
 
         const isValidSize = await validateAudioSize(audioFilePath);

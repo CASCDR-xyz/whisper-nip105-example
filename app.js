@@ -4,6 +4,7 @@ const bodyParser = require("body-parser");
 const mongoose = require('mongoose');
 const logger = require('./middleware/logger');
 const serviceRoutes = require('./routes/service');
+const testRoutes = require('./routes/test');
 const { postOfferings, houseKeeping } = require('./lib/postOfferings');
 const jobManager = require('./lib/jobManager');
 
@@ -64,6 +65,14 @@ app.use((err, req, res, next) => {
 
 // Routes
 app.use('/', serviceRoutes);
+
+// Test routes (only in DEBUG mode)
+if (process.env.DEBUG === 'true') {
+  console.log('🧪 DEBUG mode enabled - mounting test routes at /test');
+  app.use('/test', testRoutes);
+} else {
+  console.log('Production mode - test routes disabled');
+}
 
 // Periodic tasks
 async function run_periodic_tasks() {
