@@ -18,18 +18,24 @@ const allowedOrigins = ['http://localhost:3000', 'https://cascdr.xyz', 'https://
 // CORS setup first
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
+  
+  // Always set CORS headers for allowed origins
+  if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
   }
+  
+  // Set CORS headers for all requests (including preflight)
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-  res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Max-Age', '86400');
   res.header('X-Content-Type-Options', 'nosniff');
   
+  // Handle preflight requests
   if (req.method === 'OPTIONS') {
     return res.status(204).send();
   }
+  
   next();
 });
 
