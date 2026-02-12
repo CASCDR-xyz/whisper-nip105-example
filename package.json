@@ -25,7 +25,6 @@
     "music-metadata": "^7.13.5",
     "nostr-tools": "^1.17.0",
     "uuid": "^9.0.1",
-    "whisper": "^0.2.5",
     "ws": "^8.17.0"
   }
 }
