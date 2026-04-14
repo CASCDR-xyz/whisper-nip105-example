@@ -130,3 +130,5 @@ dist
 curl_test_scripts.txt
 /uploads
 .DS_Store
+node_modules_old/
+scripts/endpoint-eval.sh

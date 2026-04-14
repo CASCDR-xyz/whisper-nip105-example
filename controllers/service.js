@@ -4,7 +4,6 @@ const { getServicePrice, submitService } = require('../lib/service');
 const { createNewJobDocument, findJobRequestByPaymentHash, getIsInvoicePaid, generateInvoice } = require('../lib/nip105');
 const { logState, sleep } = require('../lib/common');
 const { deleteFile } = require('../lib/fileManagement');
-const musicMetadata = require('music-metadata');
 const JobRequest = require('../models/jobRequest');
 const {
     upload,
