@@ -1,5 +1,5 @@
 # Use an Ubuntu base with Node.js pre-installed
-FROM node:21-bullseye
+FROM node:22.23.4-bookworm
 
 # Set the working directory in the container
 WORKDIR /app
